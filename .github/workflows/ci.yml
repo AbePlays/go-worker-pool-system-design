@@ -10,7 +10,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27"
-      - run: gofmt -l .
-      - run: go vet ./...
-      - run: go test -race ./...
-      - run: go build ./...
+      - run: make fmt
+      - run: make vet
+      - run: make test
+      - run: make build

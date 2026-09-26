@@ -1,4 +1,4 @@
-.PHONY: run test vet docker-build docker-run
+.PHONY: run test vet build fmt docker-build docker-run
 
 run:
 	go run .
@@ -8,6 +8,12 @@ test:
 
 vet:
 	go vet ./...
+
+build:
+	go build ./...
+
+fmt:
+	gofmt -l .
 
 docker-build:
 	docker build -t workerpool .
