@@ -18,41 +18,63 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(logger)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
+	c := loadConfig()
+
+	s := connectStore(c.DatabaseUrl)
+	defer s.Close()
+	requeueRunning(s)
+
+	p := pool.New(s, c.JobTimeout, c.Workers)
+	p.Start()
+	slog.Info("server starting", "port", c.Port, "workers", c.Workers, "job_timeout_s", int(c.JobTimeout.Seconds()))
+
+	server := newServer(c.Port, api.New(p, s))
+	d := dispatcher.New(p, s, c.Workers)
+
+	serveUntilSignal(server, d, p)
+}
+
+func loadConfig() config.Config {
 	c, err := config.Load()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	s, err := store.New(context.Background(), c.DatabaseUrl)
+	return c
+}
+
+func connectStore(url string) *store.Store {
+	s, err := store.New(context.Background(), url)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer s.Close()
-	if n, err := s.RequeueRunning(context.Background()); err != nil {
+
+	return s
+}
+
+func requeueRunning(s *store.Store) {
+	n, err := s.RequeueRunning(context.Background())
+	if err != nil {
 		log.Fatal(err)
-	} else if n > 0 {
+	}
+
+	if n > 0 {
 		slog.Info("requeued running jobs", "count", n)
 	}
-	p := pool.New(s, c.JobTimeout, c.Workers)
-	p.Start()
-	slog.Info("server starting", "port", c.Port, "workers", c.Workers, "job_timeout_s", int(c.JobTimeout.Seconds()))
-	h := api.New(p, s)
-	d := dispatcher.New(p, s, c.Workers)
+}
 
+func newServer(port string, h *api.Handler) *http.Server {
 	mux := http.NewServeMux()
 
-	// Routes
 	mux.HandleFunc("POST /api/jobs", h.CreateJob)
 	mux.HandleFunc("GET /api/jobs/{id}", h.GetJob)
 
-	server := &http.Server{
-		Addr:    ":" + c.Port,
-		Handler: mux,
-	}
+	return &http.Server{Addr: ":" + port, Handler: mux}
+}
 
+func serveUntilSignal(server *http.Server, d *dispatcher.Dispatcher, p *pool.Pool) {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 
