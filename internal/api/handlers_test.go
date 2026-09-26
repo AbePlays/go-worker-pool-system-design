@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AbePlays/go-worker-pool-system-design/internal/dispatcher"
 	"github.com/AbePlays/go-worker-pool-system-design/internal/job"
 	"github.com/AbePlays/go-worker-pool-system-design/internal/pool"
 	"github.com/AbePlays/go-worker-pool-system-design/internal/store"
@@ -22,7 +23,7 @@ func testDBURL() string {
 	return "postgres://postgres:postgres@localhost:5432/workerpool?sslmode=disable"
 }
 
-func newTestSetup(t *testing.T, workers int) (*store.Postgres, *pool.Pool, *http.ServeMux) {
+func newTestSetup(t *testing.T, workers int) (*store.Store, *pool.Pool, *http.ServeMux) {
 	t.Helper()
 	ctx := context.Background()
 	s, err := store.New(ctx, testDBURL())
@@ -36,6 +37,9 @@ func newTestSetup(t *testing.T, workers int) (*store.Postgres, *pool.Pool, *http
 	p := pool.New(s, 30*time.Second, workers)
 	p.Start()
 	t.Cleanup(func() { p.Stop() })
+	dispCtx, dispCancel := context.WithCancel(context.Background())
+	t.Cleanup(dispCancel)
+	go dispatcher.New(p, s, workers).Run(dispCtx)
 	h := New(p, s)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/jobs", h.CreateJob)
@@ -168,19 +172,15 @@ func TestCreateBadDuration400(t *testing.T) {
 	}
 }
 
-func TestCreateAfterShutdown503(t *testing.T) {
-	s, p, mux := newTestSetup(t, 2)
+func TestCreateAfterShutdownAccepted(t *testing.T) {
+	_, p, mux := newTestSetup(t, 2)
 	p.Shutdown()
 
 	body := `{"type":"sleep","payload":{"duration_ms":10}}`
 	req := httptest.NewRequest("POST", "/api/jobs", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d", rec.Code)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 persisted after shutdown, got %d", rec.Code)
 	}
-	if rec.Header().Get("Retry-After") != "5" {
-		t.Fatalf("expected Retry-After 5, got %q", rec.Header().Get("Retry-After"))
-	}
-	_ = s
 }

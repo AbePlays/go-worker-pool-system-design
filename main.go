@@ -12,6 +12,7 @@ import (
 
 	"github.com/AbePlays/go-worker-pool-system-design/internal/api"
 	"github.com/AbePlays/go-worker-pool-system-design/internal/config"
+	"github.com/AbePlays/go-worker-pool-system-design/internal/dispatcher"
 	"github.com/AbePlays/go-worker-pool-system-design/internal/pool"
 	"github.com/AbePlays/go-worker-pool-system-design/internal/store"
 )
@@ -34,6 +35,7 @@ func main() {
 	p.Start()
 	slog.Info("server starting", "port", c.Port, "workers", c.Workers, "job_timeout_s", int(c.JobTimeout.Seconds()))
 	h := api.New(p, s)
+	d := dispatcher.New(p, s, c.Workers)
 
 	mux := http.NewServeMux()
 
@@ -55,6 +57,9 @@ func main() {
 		}
 	}()
 
+	dispCtx, dispCancel := context.WithCancel(context.Background())
+	go d.Run(dispCtx)
+
 	<-stop
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -64,6 +69,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	dispCancel()
 	p.Stop()
 
 	slog.Info("server shut down gracefully")

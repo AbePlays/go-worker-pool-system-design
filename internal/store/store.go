@@ -11,11 +11,11 @@ import (
 	"github.com/AbePlays/go-worker-pool-system-design/internal/job"
 )
 
-type Postgres struct {
+type Store struct {
 	db *pgxpool.Pool
 }
 
-func New(ctx context.Context, url string) (*Postgres, error) {
+func New(ctx context.Context, url string) (*Store, error) {
 	p, err := pgxpool.New(ctx, url)
 	if err != nil {
 		return nil, err
@@ -25,19 +25,19 @@ func New(ctx context.Context, url string) (*Postgres, error) {
 		p.Close()
 		return nil, err
 	}
-	return &Postgres{db: p}, nil
+	return &Store{db: p}, nil
 }
 
-func (p *Postgres) Close() {
+func (p *Store) Close() {
 	p.db.Close()
 }
 
-func (p *Postgres) Truncate(ctx context.Context) error {
+func (p *Store) Truncate(ctx context.Context) error {
 	_, err := p.db.Exec(ctx, `TRUNCATE jobs`)
 	return err
 }
 
-func (p *Postgres) Save(ctx context.Context, j job.Job) error {
+func (p *Store) Save(ctx context.Context, j job.Job) error {
 	payload, err := json.Marshal(j.Payload)
 	if err != nil {
 		return err
@@ -50,7 +50,7 @@ func (p *Postgres) Save(ctx context.Context, j job.Job) error {
 	return err
 }
 
-func (p *Postgres) GetByID(ctx context.Context, id string) (job.Job, bool, error) {
+func (p *Store) GetByID(ctx context.Context, id string) (job.Job, bool, error) {
 	var j job.Job
 	var payload []byte
 	var result []byte
@@ -88,7 +88,7 @@ func (p *Postgres) GetByID(ctx context.Context, id string) (job.Job, bool, error
 	return j, true, nil
 }
 
-func (p *Postgres) Update(ctx context.Context, j job.Job) (bool, error) {
+func (p *Store) Update(ctx context.Context, j job.Job) (bool, error) {
 	var resultJSON *string
 	if j.Result != nil {
 		b, err := json.Marshal(j.Result)
@@ -113,4 +113,55 @@ func (p *Postgres) Update(ctx context.Context, j job.Job) (bool, error) {
 	}
 
 	return tag.RowsAffected() > 0, nil
+}
+
+func (p *Store) Claim(ctx context.Context, limit int) ([]job.Job, error) {
+	rows, err := p.db.Query(ctx,
+		`UPDATE jobs SET status = 'running', updated_at = NOW()
+		WHERE id IN (
+			SELECT id FROM jobs
+			WHERE status = 'pending'
+			ORDER BY created_at
+			FOR UPDATE SKIP LOCKED
+			LIMIT $1
+		)
+		RETURNING id, type, payload, status, result, last_error, created_at, updated_at`,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []job.Job
+	for rows.Next() {
+		var j job.Job
+		var payload []byte
+		var result []byte
+		var lastErr *string
+
+		if err := rows.Scan(&j.ID, &j.Type, &payload, &j.Status, &result, &lastErr, &j.CreatedAt, &j.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if len(payload) > 0 {
+			if err := json.Unmarshal(payload, &j.Payload); err != nil {
+				return nil, err
+			}
+		}
+
+		if len(result) > 0 {
+			var r any
+			if err := json.Unmarshal(result, &r); err != nil {
+				return nil, err
+			}
+			j.Result = r
+		}
+
+		if lastErr != nil {
+			j.LastError = *lastErr
+		}
+		out = append(out, j)
+	}
+
+	return out, rows.Err()
 }

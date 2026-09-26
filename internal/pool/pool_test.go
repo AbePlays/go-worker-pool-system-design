@@ -19,7 +19,7 @@ func testDBURL() string {
 	return "postgres://postgres:postgres@localhost:5432/workerpool?sslmode=disable"
 }
 
-func newTestStore(t *testing.T) *store.Postgres {
+func newTestStore(t *testing.T) *store.Store {
 	t.Helper()
 	ctx := context.Background()
 	s, err := store.New(ctx, testDBURL())
@@ -33,14 +33,14 @@ func newTestStore(t *testing.T) *store.Postgres {
 	return s
 }
 
-func mustSave(t *testing.T, s *store.Postgres, j job.Job) {
+func mustSave(t *testing.T, s *store.Store, j job.Job) {
 	t.Helper()
 	if err := s.Save(context.Background(), j); err != nil {
 		t.Fatalf("save %s: %v", j.ID, err)
 	}
 }
 
-func waitFor(t *testing.T, s *store.Postgres, id string, want job.Status, timeout time.Duration) job.Job {
+func waitFor(t *testing.T, s *store.Store, id string, want job.Status, timeout time.Duration) job.Job {
 	t.Helper()
 	ctx := context.Background()
 	deadline := time.Now().Add(timeout)

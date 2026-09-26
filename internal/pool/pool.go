@@ -13,7 +13,7 @@ import (
 
 type Pool struct {
 	queue     chan string
-	store     *store.Postgres
+	store     *store.Store
 	timeout   time.Duration
 	wg        sync.WaitGroup
 	mu        sync.RWMutex
@@ -22,7 +22,7 @@ type Pool struct {
 	workers   int
 }
 
-func New(store *store.Postgres, timeout time.Duration, workers int) *Pool {
+func New(store *store.Store, timeout time.Duration, workers int) *Pool {
 	return &Pool{
 		queue:   make(chan string, workers),
 		store:   store,

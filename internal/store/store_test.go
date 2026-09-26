@@ -55,3 +55,51 @@ func TestRoundtrip(t *testing.T) {
 		t.Fatal("expected not found for random id")
 	}
 }
+
+func TestClaimBatch(t *testing.T) {
+	ctx := context.Background()
+	s, err := New(ctx, testURL())
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer s.Close()
+	if err := s.Truncate(ctx); err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+
+	for range 5 {
+		j := job.Job{ID: uuid.NewString(), Type: "sleep", Payload: job.Payload{DurationMs: 10}, Status: job.StatusPending}
+		if err := s.Save(ctx, j); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+	}
+
+	got, err := s.Claim(ctx, 3)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 claimed, got %d", len(got))
+	}
+	for _, j := range got {
+		if j.Status != job.StatusRunning {
+			t.Fatalf("expected running, got %s", j.Status)
+		}
+	}
+
+	rest, err := s.Claim(ctx, 8)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if len(rest) != 2 {
+		t.Fatalf("expected 2 remaining, got %d", len(rest))
+	}
+
+	empty, err := s.Claim(ctx, 8)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("expected 0, got %d", len(empty))
+	}
+}
