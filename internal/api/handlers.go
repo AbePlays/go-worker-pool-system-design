@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/AbePlays/go-worker-pool-system-design/internal/job"
 	"github.com/AbePlays/go-worker-pool-system-design/internal/pool"
@@ -20,6 +21,8 @@ type CreateJobRequest struct {
 	Payload job.Payload `json:"payload"`
 }
 
+const maxBodySize = 64 << 10
+
 func New(pool *pool.Pool, store *store.Store) *Handler {
 	return &Handler{
 		pool:  pool,
@@ -28,10 +31,26 @@ func New(pool *pool.Pool, store *store.Store) *Handler {
 }
 
 func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+
 	var req CreateJobRequest
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		if strings.Contains(err.Error(), "request body too large") {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
+		return
+	}
+
+	if req.Type != "sleep" {
+		http.Error(w, "invalid job type", http.StatusBadRequest)
+		return
+	}
+
+	if req.Payload.DurationMs < 0 || req.Payload.DurationMs > 30000 {
+		http.Error(w, "invalid payload duration", http.StatusBadRequest)
 		return
 	}
 

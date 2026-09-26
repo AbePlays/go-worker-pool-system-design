@@ -114,3 +114,62 @@ func TestFullFlowPendingToDone(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestCreateOversize413(t *testing.T) {
+	s := store.New()
+	p := pool.New(s, 2)
+	p.Start()
+	defer p.Stop()
+	mux := newTestMux(s, p)
+
+	big := strings.Repeat("a", (64<<10)+1000)
+	body := `{"type":"sleep","payload":{"duration_ms":10},"pad":"` + big + `"}`
+	req := httptest.NewRequest("POST", "/api/jobs", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d", rec.Code)
+	}
+}
+
+func TestCreateUnknownType400(t *testing.T) {
+	s := store.New()
+	p := pool.New(s, 2)
+	p.Start()
+	defer p.Stop()
+	mux := newTestMux(s, p)
+
+	for _, body := range []string{
+		`{"type":"webhook","payload":{"duration_ms":10}}`,
+		`{"type":"","payload":{"duration_ms":10}}`,
+		`{}`,
+	} {
+		req := httptest.NewRequest("POST", "/api/jobs", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for %s, got %d", body, rec.Code)
+		}
+	}
+}
+
+func TestCreateBadDuration400(t *testing.T) {
+	s := store.New()
+	p := pool.New(s, 2)
+	p.Start()
+	defer p.Stop()
+	mux := newTestMux(s, p)
+
+	for _, body := range []string{
+		`{"type":"sleep","payload":{"duration_ms":-5}}`,
+		`{"type":"sleep","payload":{"duration_ms":30001}}`,
+	} {
+		req := httptest.NewRequest("POST", "/api/jobs", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for %s, got %d", body, rec.Code)
+		}
+	}
+}
