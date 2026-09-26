@@ -1,0 +1,3 @@
+DROP INDEX IF EXISTS idx_jobs_claim;
+
+DROP TABLE IF EXISTS jobs;
