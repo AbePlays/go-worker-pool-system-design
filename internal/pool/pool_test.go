@@ -80,15 +80,15 @@ func TestBoundedConcurrency(t *testing.T) {
 
 	n := 8
 	dur := 200
-	for i := 0; i < n; i++ {
+	for i := range n {
 		id := string(rune('a' + i))
 		s.Save(job.Job{ID: id, Type: "sleep", Payload: job.Payload{DurationMs: dur}, Status: job.StatusPending})
 	}
 	start := time.Now()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		p.Submit(string(rune('a' + i)))
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		waitFor(t, s, string(rune('a'+i)), job.StatusDone, 5*time.Second)
 	}
 	elapsed := time.Since(start)
