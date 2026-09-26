@@ -25,7 +25,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	s := store.New()
+	s, err := store.New(context.Background(), c.DatabaseUrl)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer s.Close()
 	p := pool.New(s, c.JobTimeout, c.Workers)
 	p.Start()
 	slog.Info("server starting", "port", c.Port, "workers", c.Workers, "job_timeout_s", int(c.JobTimeout.Seconds()))

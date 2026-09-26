@@ -1,10 +1,10 @@
-.PHONY: run test vet build fmt docker-build docker-run migrate-up migrate-down
+.PHONY: run test vet build fmt docker-build docker-run migrate-up migrate-down compose-up compose-down reset
 
 run:
 	go run .
 
 test:
-	go test ./... -race
+	go test -p 1 ./... -race
 
 vet:
 	go vet ./...
@@ -13,7 +13,7 @@ build:
 	go build ./...
 
 fmt:
-	gofmt -l .
+	test -z "$$(gofmt -l .)"
 
 docker-build:
 	docker build -t workerpool .
@@ -26,3 +26,12 @@ migrate-up:
 
 migrate-down:
 	migrate -path db/migrations -database postgres://postgres:postgres@localhost:5432/workerpool?sslmode=disable down 1
+
+compose-up:
+	docker compose up --build
+
+compose-down:
+	docker compose down
+
+reset:
+	docker compose down -v

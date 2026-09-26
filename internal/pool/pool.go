@@ -13,7 +13,7 @@ import (
 
 type Pool struct {
 	queue     chan string
-	store     *store.Store
+	store     *store.Postgres
 	timeout   time.Duration
 	wg        sync.WaitGroup
 	mu        sync.RWMutex
@@ -22,7 +22,7 @@ type Pool struct {
 	workers   int
 }
 
-func New(store *store.Store, timeout time.Duration, workers int) *Pool {
+func New(store *store.Postgres, timeout time.Duration, workers int) *Pool {
 	return &Pool{
 		queue:   make(chan string, workers),
 		store:   store,
@@ -41,7 +41,12 @@ func (p *Pool) Start() {
 func (p *Pool) worker() {
 	defer p.wg.Done()
 	for id := range p.queue {
-		j, ok := p.store.GetByID(id)
+		dbCtx := context.Background()
+		j, ok, err := p.store.GetByID(dbCtx, id)
+		if err != nil {
+			slog.Error("job fetch failed", "job_id", id, "error", err.Error())
+			continue
+		}
 		if !ok {
 			continue
 		}
@@ -49,13 +54,19 @@ func (p *Pool) worker() {
 		if j.Payload.DurationMs < 0 {
 			j.Status = job.StatusFailed
 			j.LastError = fmt.Sprintf("invalid duration_ms %d", j.Payload.DurationMs)
-			p.store.Update(j)
-			slog.Error("job failed", "job_id", j.ID, "type", j.Type, "error", j.LastError)
+			if _, err := p.store.Update(dbCtx, j); err != nil {
+				slog.Error("job update failed", "job_id", j.ID, "error", err.Error())
+			} else {
+				slog.Error("job failed", "job_id", j.ID, "type", j.Type, "error", j.LastError)
+			}
 			continue
 		}
 
 		j.Status = job.StatusRunning
-		p.store.Update(j)
+		if _, err := p.store.Update(dbCtx, j); err != nil {
+			slog.Error("job update failed", "job_id", j.ID, "error", err.Error())
+			continue
+		}
 		slog.Info("job started", "job_id", j.ID, "type", j.Type, "duration_ms", j.Payload.DurationMs)
 
 		ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
@@ -64,15 +75,21 @@ func (p *Pool) worker() {
 			cancel()
 			j.Status = job.StatusDone
 			j.Result = fmt.Sprintf("Slept for %dms", j.Payload.DurationMs)
-			p.store.Update(j)
-			slog.Info("job done", "job_id", j.ID, "type", j.Type, "duration_ms", j.Payload.DurationMs)
+			if _, err := p.store.Update(dbCtx, j); err != nil {
+				slog.Error("job update failed", "job_id", j.ID, "error", err.Error())
+			} else {
+				slog.Info("job done", "job_id", j.ID, "type", j.Type, "duration_ms", j.Payload.DurationMs)
+			}
 		case <-ctx.Done():
 			cancel()
 			j.Status = job.StatusFailed
 			j.LastError = "timeout: job exceeded deadline"
 			j.Result = nil
-			p.store.Update(j)
-			slog.Error("job failed", "job_id", j.ID, "type", j.Type, "error", j.LastError)
+			if _, err := p.store.Update(dbCtx, j); err != nil {
+				slog.Error("job update failed", "job_id", j.ID, "error", err.Error())
+			} else {
+				slog.Error("job failed", "job_id", j.ID, "type", j.Type, "error", j.LastError)
+			}
 		}
 	}
 }

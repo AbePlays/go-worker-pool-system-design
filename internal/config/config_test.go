@@ -10,6 +10,7 @@ func setValidEnv(t *testing.T) {
 	t.Setenv("PORT", "8080")
 	t.Setenv("WORKERS", "8")
 	t.Setenv("JOB_TIMEOUT", "30")
+	t.Setenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/workerpool?sslmode=disable")
 }
 
 func TestLoadValid(t *testing.T) {
@@ -27,6 +28,7 @@ func TestLoadMissing(t *testing.T) {
 	t.Setenv("PORT", "")
 	t.Setenv("WORKERS", "")
 	t.Setenv("JOB_TIMEOUT", "")
+	t.Setenv("DATABASE_URL", "")
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error for missing env")
 	}

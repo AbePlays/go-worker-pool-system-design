@@ -14,7 +14,7 @@ import (
 
 type Handler struct {
 	pool  *pool.Pool
-	store *store.Store
+	store *store.Postgres
 }
 
 type CreateJobRequest struct {
@@ -24,7 +24,7 @@ type CreateJobRequest struct {
 
 const maxBodySize = 64 << 10
 
-func New(pool *pool.Pool, store *store.Store) *Handler {
+func New(pool *pool.Pool, store *store.Postgres) *Handler {
 	return &Handler{
 		pool:  pool,
 		store: store,
@@ -61,7 +61,11 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		Payload: req.Payload,
 		Status:  job.StatusPending,
 	}
-	h.store.Save(j)
+	if err := h.store.Save(r.Context(), j); err != nil {
+		slog.Error("job save failed", "job_id", j.ID, "error", err.Error())
+		http.Error(w, "store unavailable", http.StatusInternalServerError)
+		return
+	}
 	ok := h.pool.Submit(j.ID)
 	if !ok {
 		slog.Warn("enqueue rejected shutting down", "job_id", j.ID, "type", j.Type)
@@ -83,7 +87,12 @@ func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	j, ok := h.store.GetByID(id)
+	j, ok, err := h.store.GetByID(r.Context(), id)
+	if err != nil {
+		slog.Error("job fetch failed", "job_id", id, "error", err.Error())
+		http.Error(w, "store unavailable", http.StatusInternalServerError)
+		return
+	}
 	if !ok {
 		http.Error(w, "job not found", http.StatusNotFound)
 		return

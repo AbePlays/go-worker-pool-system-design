@@ -8,9 +8,10 @@ import (
 )
 
 type Config struct {
-	JobTimeout time.Duration
-	Port       string
-	Workers    int
+	DatabaseUrl string
+	JobTimeout  time.Duration
+	Port        string
+	Workers     int
 }
 
 func Load() (Config, error) {
@@ -43,9 +44,15 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("WORKERS must be 1..100, got %d", workers)
 	}
 
+	databaseUrl := os.Getenv("DATABASE_URL")
+	if databaseUrl == "" {
+		return Config{}, fmt.Errorf("DATABASE_URL environment variable not set")
+	}
+
 	return Config{
-		JobTimeout: time.Duration(timeout) * time.Second,
-		Port:       port,
-		Workers:    workers,
+		DatabaseUrl: databaseUrl,
+		JobTimeout:  time.Duration(timeout) * time.Second,
+		Port:        port,
+		Workers:     workers,
 	}, nil
 }

@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,20 +15,36 @@ import (
 	"github.com/AbePlays/go-worker-pool-system-design/internal/store"
 )
 
-func newTestMux(s *store.Store, p *pool.Pool) *http.ServeMux {
+func testDBURL() string {
+	if v := os.Getenv("DATABASE_URL"); v != "" {
+		return v
+	}
+	return "postgres://postgres:postgres@localhost:5432/workerpool?sslmode=disable"
+}
+
+func newTestSetup(t *testing.T, workers int) (*store.Postgres, *pool.Pool, *http.ServeMux) {
+	t.Helper()
+	ctx := context.Background()
+	s, err := store.New(ctx, testDBURL())
+	if err != nil {
+		t.Fatalf("postgres connect: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	if err := s.Truncate(ctx); err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+	p := pool.New(s, 30*time.Second, workers)
+	p.Start()
+	t.Cleanup(func() { p.Stop() })
 	h := New(p, s)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/jobs", h.CreateJob)
 	mux.HandleFunc("GET /api/jobs/{id}", h.GetJob)
-	return mux
+	return s, p, mux
 }
 
 func TestCreateBadJSON(t *testing.T) {
-	s := store.New()
-	p := pool.New(s, 30*time.Second, 2)
-	p.Start()
-	defer p.Stop()
-	mux := newTestMux(s, p)
+	_, _, mux := newTestSetup(t, 2)
 
 	req := httptest.NewRequest("POST", "/api/jobs", strings.NewReader("{bad"))
 	rec := httptest.NewRecorder()
@@ -38,11 +56,7 @@ func TestCreateBadJSON(t *testing.T) {
 }
 
 func TestCreateGoodReturnsID(t *testing.T) {
-	s := store.New()
-	p := pool.New(s, 30*time.Second, 2)
-	p.Start()
-	defer p.Stop()
-	mux := newTestMux(s, p)
+	_, _, mux := newTestSetup(t, 2)
 
 	body := `{"type":"sleep","payload":{"duration_ms":10}}`
 	req := httptest.NewRequest("POST", "/api/jobs", strings.NewReader(body))
@@ -62,13 +76,9 @@ func TestCreateGoodReturnsID(t *testing.T) {
 }
 
 func TestGetMissing404(t *testing.T) {
-	s := store.New()
-	p := pool.New(s, 30*time.Second, 1)
-	p.Start()
-	defer p.Stop()
-	mux := newTestMux(s, p)
+	_, _, mux := newTestSetup(t, 1)
 
-	req := httptest.NewRequest("GET", "/api/jobs/nope", nil)
+	req := httptest.NewRequest("GET", "/api/jobs/00000000-0000-0000-0000-000000000000", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -78,11 +88,7 @@ func TestGetMissing404(t *testing.T) {
 }
 
 func TestFullFlowPendingToDone(t *testing.T) {
-	s := store.New()
-	p := pool.New(s, 30*time.Second, 2)
-	p.Start()
-	defer p.Stop()
-	mux := newTestMux(s, p)
+	_, _, mux := newTestSetup(t, 2)
 
 	body := `{"type":"sleep","payload":{"duration_ms":30}}`
 	req := httptest.NewRequest("POST", "/api/jobs", strings.NewReader(body))
@@ -95,7 +101,7 @@ func TestFullFlowPendingToDone(t *testing.T) {
 	_ = json.NewDecoder(rec.Body).Decode(&created)
 	id := created["id"]
 
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		req := httptest.NewRequest("GET", "/api/jobs/"+id, nil)
 		rec := httptest.NewRecorder()
@@ -116,11 +122,7 @@ func TestFullFlowPendingToDone(t *testing.T) {
 }
 
 func TestCreateOversize413(t *testing.T) {
-	s := store.New()
-	p := pool.New(s, 30*time.Second, 2)
-	p.Start()
-	defer p.Stop()
-	mux := newTestMux(s, p)
+	_, _, mux := newTestSetup(t, 2)
 
 	big := strings.Repeat("a", (64<<10)+1000)
 	body := `{"type":"sleep","payload":{"duration_ms":10},"pad":"` + big + `"}`
@@ -134,11 +136,7 @@ func TestCreateOversize413(t *testing.T) {
 }
 
 func TestCreateUnknownType400(t *testing.T) {
-	s := store.New()
-	p := pool.New(s, 30*time.Second, 2)
-	p.Start()
-	defer p.Stop()
-	mux := newTestMux(s, p)
+	_, _, mux := newTestSetup(t, 2)
 
 	for _, body := range []string{
 		`{"type":"webhook","payload":{"duration_ms":10}}`,
@@ -155,11 +153,7 @@ func TestCreateUnknownType400(t *testing.T) {
 }
 
 func TestCreateBadDuration400(t *testing.T) {
-	s := store.New()
-	p := pool.New(s, 30*time.Second, 2)
-	p.Start()
-	defer p.Stop()
-	mux := newTestMux(s, p)
+	_, _, mux := newTestSetup(t, 2)
 
 	for _, body := range []string{
 		`{"type":"sleep","payload":{"duration_ms":-5}}`,
@@ -175,10 +169,7 @@ func TestCreateBadDuration400(t *testing.T) {
 }
 
 func TestCreateAfterShutdown503(t *testing.T) {
-	s := store.New()
-	p := pool.New(s, 30*time.Second, 2)
-	p.Start()
-	mux := newTestMux(s, p)
+	s, p, mux := newTestSetup(t, 2)
 	p.Shutdown()
 
 	body := `{"type":"sleep","payload":{"duration_ms":10}}`
@@ -191,4 +182,5 @@ func TestCreateAfterShutdown503(t *testing.T) {
 	if rec.Header().Get("Retry-After") != "5" {
 		t.Fatalf("expected Retry-After 5, got %q", rec.Header().Get("Retry-After"))
 	}
+	_ = s
 }
