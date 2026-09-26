@@ -121,3 +121,42 @@ func TestJobTimeout(t *testing.T) {
 		t.Fatal("expected LastError on timeout")
 	}
 }
+
+func TestSubmitAfterShutdownFalse(t *testing.T) {
+	s := store.New()
+	p := New(s, 30*time.Second, 1)
+	p.Start()
+	p.Shutdown()
+	if p.Submit("late") {
+		t.Fatal("expected Submit false after Shutdown")
+	}
+}
+
+func TestDoubleShutdownSafe(t *testing.T) {
+	s := store.New()
+	p := New(s, 30*time.Second, 1)
+	p.Start()
+	p.Shutdown()
+	p.Shutdown() // must not panic
+	p.Stop()     // alias must not panic
+}
+
+func TestShutdownDrains(t *testing.T) {
+	s := store.New()
+	p := New(s, 30*time.Second, 2)
+	p.Start()
+
+	s.Save(job.Job{ID: "d1", Type: "sleep", Payload: job.Payload{DurationMs: 100}, Status: job.StatusPending})
+	if !p.Submit("d1") {
+		t.Fatal("submit should succeed before shutdown")
+	}
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		p.Shutdown()
+	}()
+	p.wg.Wait() // ensure drain path exercised via Shutdown internal wait
+	got, _ := s.GetByID("d1")
+	if got.Status != job.StatusDone {
+		t.Fatalf("expected drained done, got %s", got.Status)
+	}
+}

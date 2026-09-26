@@ -1,0 +1,7 @@
+workerpool
+*.exe
+*.test
+*.out
+bin/
+.env
+.DS_Store

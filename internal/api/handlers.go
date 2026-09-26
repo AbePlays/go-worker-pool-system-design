@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -61,8 +62,15 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		Status:  job.StatusPending,
 	}
 	h.store.Save(j)
-	h.pool.Submit(j.ID)
+	ok := h.pool.Submit(j.ID)
+	if !ok {
+		slog.Warn("enqueue rejected shutting down", "job_id", j.ID, "type", j.Type)
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "pool is closed", http.StatusServiceUnavailable)
+		return
+	}
 
+	slog.Info("job enqueued", "job_id", j.ID, "type", j.Type, "duration_ms", j.Payload.DurationMs)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]string{"id": j.ID})

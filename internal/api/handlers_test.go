@@ -173,3 +173,22 @@ func TestCreateBadDuration400(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateAfterShutdown503(t *testing.T) {
+	s := store.New()
+	p := pool.New(s, 30*time.Second, 2)
+	p.Start()
+	mux := newTestMux(s, p)
+	p.Shutdown()
+
+	body := `{"type":"sleep","payload":{"duration_ms":10}}`
+	req := httptest.NewRequest("POST", "/api/jobs", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+	if rec.Header().Get("Retry-After") != "5" {
+		t.Fatalf("expected Retry-After 5, got %q", rec.Header().Get("Retry-After"))
+	}
+}
