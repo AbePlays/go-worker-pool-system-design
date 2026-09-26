@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -12,14 +13,16 @@ import (
 type Pool struct {
 	queue   chan string
 	store   *store.Store
+	timeout time.Duration
 	wg      sync.WaitGroup
 	workers int
 }
 
-func New(store *store.Store, workers int) *Pool {
+func New(store *store.Store, timeout time.Duration, workers int) *Pool {
 	return &Pool{
 		queue:   make(chan string, workers),
 		store:   store,
+		timeout: timeout,
 		workers: workers,
 	}
 }
@@ -39,21 +42,30 @@ func (p *Pool) worker() {
 			continue
 		}
 
-		j.Status = job.StatusRunning
-		p.store.Update(j)
-
-		time.Sleep(time.Duration(j.Payload.DurationMs) * time.Millisecond)
-
 		if j.Payload.DurationMs < 0 {
 			j.Status = job.StatusFailed
 			j.LastError = fmt.Sprintf("invalid duration_ms %d", j.Payload.DurationMs)
-		} else {
-			j.Status = job.StatusDone
+			p.store.Update(j)
+			continue
 		}
 
-		result := fmt.Sprintf("Slept for %dms", j.Payload.DurationMs)
-		j.Result = result
+		j.Status = job.StatusRunning
 		p.store.Update(j)
+
+		ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
+		select {
+		case <-time.After(time.Duration(j.Payload.DurationMs) * time.Millisecond):
+			cancel()
+			j.Status = job.StatusDone
+			j.Result = fmt.Sprintf("Slept for %dms", j.Payload.DurationMs)
+			p.store.Update(j)
+		case <-ctx.Done():
+			cancel()
+			j.Status = job.StatusFailed
+			j.LastError = "timeout: job exceeded deadline"
+			j.Result = nil
+			p.store.Update(j)
+		}
 	}
 }
 

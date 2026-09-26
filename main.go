@@ -17,7 +17,7 @@ func main() {
 	}
 
 	s := store.New()
-	p := pool.New(s, c.Workers)
+	p := pool.New(s, c.JobTimeout, c.Workers)
 	p.Start()
 	h := api.New(p, s)
 

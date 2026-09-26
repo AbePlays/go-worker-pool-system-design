@@ -23,7 +23,7 @@ func newTestMux(s *store.Store, p *pool.Pool) *http.ServeMux {
 
 func TestCreateBadJSON(t *testing.T) {
 	s := store.New()
-	p := pool.New(s, 2)
+	p := pool.New(s, 30*time.Second, 2)
 	p.Start()
 	defer p.Stop()
 	mux := newTestMux(s, p)
@@ -39,7 +39,7 @@ func TestCreateBadJSON(t *testing.T) {
 
 func TestCreateGoodReturnsID(t *testing.T) {
 	s := store.New()
-	p := pool.New(s, 2)
+	p := pool.New(s, 30*time.Second, 2)
 	p.Start()
 	defer p.Stop()
 	mux := newTestMux(s, p)
@@ -63,7 +63,7 @@ func TestCreateGoodReturnsID(t *testing.T) {
 
 func TestGetMissing404(t *testing.T) {
 	s := store.New()
-	p := pool.New(s, 1)
+	p := pool.New(s, 30*time.Second, 1)
 	p.Start()
 	defer p.Stop()
 	mux := newTestMux(s, p)
@@ -79,7 +79,7 @@ func TestGetMissing404(t *testing.T) {
 
 func TestFullFlowPendingToDone(t *testing.T) {
 	s := store.New()
-	p := pool.New(s, 2)
+	p := pool.New(s, 30*time.Second, 2)
 	p.Start()
 	defer p.Stop()
 	mux := newTestMux(s, p)
@@ -117,7 +117,7 @@ func TestFullFlowPendingToDone(t *testing.T) {
 
 func TestCreateOversize413(t *testing.T) {
 	s := store.New()
-	p := pool.New(s, 2)
+	p := pool.New(s, 30*time.Second, 2)
 	p.Start()
 	defer p.Stop()
 	mux := newTestMux(s, p)
@@ -135,7 +135,7 @@ func TestCreateOversize413(t *testing.T) {
 
 func TestCreateUnknownType400(t *testing.T) {
 	s := store.New()
-	p := pool.New(s, 2)
+	p := pool.New(s, 30*time.Second, 2)
 	p.Start()
 	defer p.Stop()
 	mux := newTestMux(s, p)
@@ -156,7 +156,7 @@ func TestCreateUnknownType400(t *testing.T) {
 
 func TestCreateBadDuration400(t *testing.T) {
 	s := store.New()
-	p := pool.New(s, 2)
+	p := pool.New(s, 30*time.Second, 2)
 	p.Start()
 	defer p.Stop()
 	mux := newTestMux(s, p)

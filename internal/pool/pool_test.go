@@ -26,7 +26,7 @@ func waitFor(t *testing.T, s *store.Store, id string, want job.Status, timeout t
 
 func TestSingleJobDone(t *testing.T) {
 	s := store.New()
-	p := New(s, 2)
+	p := New(s, 30*time.Second, 2)
 	p.Start()
 	defer p.Stop()
 
@@ -42,7 +42,7 @@ func TestSingleJobDone(t *testing.T) {
 
 func TestNegativeDurationFailed(t *testing.T) {
 	s := store.New()
-	p := New(s, 2)
+	p := New(s, 30*time.Second, 2)
 	p.Start()
 	defer p.Stop()
 
@@ -58,7 +58,7 @@ func TestNegativeDurationFailed(t *testing.T) {
 
 func TestMissingIDDoesNotCrashWorker(t *testing.T) {
 	s := store.New()
-	p := New(s, 1)
+	p := New(s, 30*time.Second, 1)
 	p.Start()
 	defer p.Stop()
 
@@ -74,7 +74,7 @@ func TestMissingIDDoesNotCrashWorker(t *testing.T) {
 func TestBoundedConcurrency(t *testing.T) {
 	s := store.New()
 	workers := 4
-	p := New(s, workers)
+	p := New(s, 30*time.Second, workers)
 	p.Start()
 	defer p.Stop()
 
@@ -99,5 +99,25 @@ func TestBoundedConcurrency(t *testing.T) {
 	}
 	if elapsed > 1200*time.Millisecond {
 		t.Fatalf("too slow (%v), expected ~400ms for 2 waves", elapsed)
+	}
+}
+
+func TestJobTimeout(t *testing.T) {
+	s := store.New()
+	p := New(s, 50*time.Millisecond, 1)
+	p.Start()
+	defer p.Stop()
+
+	s.Save(job.Job{ID: "slow", Type: "sleep", Payload: job.Payload{DurationMs: 5000}, Status: job.StatusPending})
+	start := time.Now()
+	p.Submit("slow")
+
+	got := waitFor(t, s, "slow", job.StatusFailed, 2*time.Second)
+	elapsed := time.Since(start)
+	if elapsed > 1000*time.Millisecond {
+		t.Fatalf("timeout did not abort early, took %v", elapsed)
+	}
+	if got.LastError == "" {
+		t.Fatal("expected LastError on timeout")
 	}
 }
