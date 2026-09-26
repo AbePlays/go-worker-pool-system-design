@@ -103,3 +103,38 @@ func TestClaimBatch(t *testing.T) {
 		t.Fatalf("expected 0, got %d", len(empty))
 	}
 }
+
+func TestRequeueRunning(t *testing.T) {
+	ctx := context.Background()
+	s, err := New(ctx, testURL())
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer s.Close()
+	if err := s.Truncate(ctx); err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+
+	j := job.Job{ID: uuid.NewString(), Type: "sleep", Payload: job.Payload{DurationMs: 10}, Status: job.StatusPending}
+	if err := s.Save(ctx, j); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	claimed, err := s.Claim(ctx, 1)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim: %v n=%d", err, len(claimed))
+	}
+
+	n, err := s.RequeueRunning(ctx)
+	if err != nil || n != 1 {
+		t.Fatalf("requeue: %v n=%d", err, n)
+	}
+	got, ok, err := s.GetByID(ctx, j.ID)
+	if err != nil || !ok || got.Status != job.StatusPending {
+		t.Fatalf("expected pending, got %+v err=%v", got, err)
+	}
+
+	n, err = s.RequeueRunning(ctx)
+	if err != nil || n != 0 {
+		t.Fatalf("expected 0, got %d err=%v", n, err)
+	}
+}

@@ -31,6 +31,11 @@ func main() {
 		log.Fatal(err)
 	}
 	defer s.Close()
+	if n, err := s.RequeueRunning(context.Background()); err != nil {
+		log.Fatal(err)
+	} else if n > 0 {
+		slog.Info("requeued running jobs", "count", n)
+	}
 	p := pool.New(s, c.JobTimeout, c.Workers)
 	p.Start()
 	slog.Info("server starting", "port", c.Port, "workers", c.Workers, "job_timeout_s", int(c.JobTimeout.Seconds()))

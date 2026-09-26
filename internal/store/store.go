@@ -165,3 +165,14 @@ func (p *Store) Claim(ctx context.Context, limit int) ([]job.Job, error) {
 
 	return out, rows.Err()
 }
+
+func (p *Store) RequeueRunning(ctx context.Context) (int64, error) {
+	tag, err := p.db.Exec(ctx,
+		`UPDATE jobs SET status = 'pending', updated_at = NOW() WHERE status = 'running'`,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	return tag.RowsAffected(), nil
+}
