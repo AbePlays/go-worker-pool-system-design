@@ -19,7 +19,7 @@ docker-build:
 	docker build -t workerpool .
 
 docker-run:
-	docker run --rm -p 8080:8080 -e PORT=8080 -e WORKERS=8 -e JOB_TIMEOUT=30 workerpool
+	docker run --rm -p 8080:8080 -e PORT=8080 -e WORKERS=8 -e JOB_TIMEOUT=30 -e MAX_ATTEMPTS=3 workerpool
 
 migrate-up:
 	migrate -path db/migrations -database postgres://postgres:postgres@localhost:5432/workerpool?sslmode=disable up

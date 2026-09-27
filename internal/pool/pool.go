@@ -38,6 +38,42 @@ func (p *Pool) Start() {
 	}
 }
 
+func backoffForAttempt(attempt int) time.Duration {
+	d := 2 * time.Second
+	for i := 1; i < attempt; i++ {
+		d *= 2
+		if d >= time.Minute {
+			return time.Minute
+		}
+	}
+
+	return d
+}
+
+func (p *Pool) fail(j job.Job, reason string) {
+	j.Attempts++
+	j.LastError = reason
+	j.Result = nil
+
+	if j.MaxAttempts <= 0 || j.Attempts >= j.MaxAttempts {
+		j.Status = job.StatusFailed
+		if _, err := p.store.Update(context.Background(), j); err != nil {
+			slog.Error("job update failed", "job_id", j.ID, "error", err.Error())
+		} else {
+			slog.Error("job failed", "job_id", j.ID, "type", j.Type, "error", j.LastError, "attempts", j.Attempts)
+		}
+		return
+	}
+
+	j.Status = job.StatusPending
+	j.NextRunAt = time.Now().Add(backoffForAttempt(j.Attempts))
+	if _, err := p.store.Update(context.Background(), j); err != nil {
+		slog.Error("job update failed", "job_id", j.ID, "error", err.Error())
+	} else {
+		slog.Info("job retry scheduled", "job_id", j.ID, "type", j.Type, "attempt", j.Attempts, "next_run_at", j.NextRunAt)
+	}
+}
+
 func (p *Pool) worker() {
 	defer p.wg.Done()
 	for id := range p.queue {
@@ -52,13 +88,7 @@ func (p *Pool) worker() {
 		}
 
 		if j.Payload.DurationMs < 0 {
-			j.Status = job.StatusFailed
-			j.LastError = fmt.Sprintf("invalid duration_ms %d", j.Payload.DurationMs)
-			if _, err := p.store.Update(dbCtx, j); err != nil {
-				slog.Error("job update failed", "job_id", j.ID, "error", err.Error())
-			} else {
-				slog.Error("job failed", "job_id", j.ID, "type", j.Type, "error", j.LastError)
-			}
+			p.fail(j, fmt.Sprintf("invalid duration_ms %d", j.Payload.DurationMs))
 			continue
 		}
 
@@ -82,14 +112,7 @@ func (p *Pool) worker() {
 			}
 		case <-ctx.Done():
 			cancel()
-			j.Status = job.StatusFailed
-			j.LastError = "timeout: job exceeded deadline"
-			j.Result = nil
-			if _, err := p.store.Update(dbCtx, j); err != nil {
-				slog.Error("job update failed", "job_id", j.ID, "error", err.Error())
-			} else {
-				slog.Error("job failed", "job_id", j.ID, "type", j.Type, "error", j.LastError)
-			}
+			p.fail(j, "timeout: job exceeded deadline")
 		}
 	}
 }

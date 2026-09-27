@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -136,5 +137,38 @@ func TestRequeueRunning(t *testing.T) {
 	n, err = s.RequeueRunning(ctx)
 	if err != nil || n != 0 {
 		t.Fatalf("expected 0, got %d err=%v", n, err)
+	}
+}
+
+func TestClaimSkipsFuture(t *testing.T) {
+	ctx := context.Background()
+	s, err := New(ctx, testURL())
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer s.Close()
+	if err := s.Truncate(ctx); err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+
+	j := job.Job{ID: uuid.NewString(), Type: "sleep", Payload: job.Payload{DurationMs: 10}, Status: job.StatusPending, MaxAttempts: 3}
+	if err := s.Save(ctx, j); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	j.NextRunAt = time.Now().Add(time.Hour)
+	if _, err := s.Update(ctx, j); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if claimed, err := s.Claim(ctx, 8); err != nil || len(claimed) != 0 {
+		t.Fatalf("future row must be skipped: %v n=%d", err, len(claimed))
+	}
+
+	j.NextRunAt = time.Now().Add(-time.Second)
+	if _, err := s.Update(ctx, j); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if claimed, err := s.Claim(ctx, 8); err != nil || len(claimed) != 1 {
+		t.Fatalf("due row must be claimed: %v n=%d", err, len(claimed))
 	}
 }

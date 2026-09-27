@@ -30,7 +30,7 @@ func main() {
 	p.Start()
 	slog.Info("server starting", "port", c.Port, "workers", c.Workers, "job_timeout_s", int(c.JobTimeout.Seconds()))
 
-	server := newServer(c.Port, api.New(p, s))
+	server := newServer(c.Port, api.New(p, s, c.MaxAttempts))
 	d := dispatcher.New(p, s, c.Workers)
 
 	serveUntilSignal(server, d, p)

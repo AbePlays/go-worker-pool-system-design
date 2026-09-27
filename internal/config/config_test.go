@@ -10,6 +10,7 @@ func setValidEnv(t *testing.T) {
 	t.Setenv("PORT", "8080")
 	t.Setenv("WORKERS", "8")
 	t.Setenv("JOB_TIMEOUT", "30")
+	t.Setenv("MAX_ATTEMPTS", "3")
 	t.Setenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/workerpool?sslmode=disable")
 }
 
@@ -19,7 +20,7 @@ func TestLoadValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if cfg.Port != "8080" || cfg.Workers != 8 || cfg.JobTimeout != 30*time.Second {
+	if cfg.Port != "8080" || cfg.Workers != 8 || cfg.JobTimeout != 30*time.Second || cfg.MaxAttempts != 3 {
 		t.Fatalf("mismatch: %+v", cfg)
 	}
 }
@@ -28,6 +29,7 @@ func TestLoadMissing(t *testing.T) {
 	t.Setenv("PORT", "")
 	t.Setenv("WORKERS", "")
 	t.Setenv("JOB_TIMEOUT", "")
+	t.Setenv("MAX_ATTEMPTS", "")
 	t.Setenv("DATABASE_URL", "")
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error for missing env")
@@ -50,6 +52,16 @@ func TestLoadBadTimeout(t *testing.T) {
 		t.Setenv("JOB_TIMEOUT", v)
 		if _, err := Load(); err == nil {
 			t.Fatalf("expected error for JOB_TIMEOUT=%s", v)
+		}
+	}
+}
+
+func TestLoadBadMaxAttempts(t *testing.T) {
+	for _, v := range []string{"abc", "0", "-1", "11"} {
+		setValidEnv(t)
+		t.Setenv("MAX_ATTEMPTS", v)
+		if _, err := Load(); err == nil {
+			t.Fatalf("expected error for MAX_ATTEMPTS=%s", v)
 		}
 	}
 }

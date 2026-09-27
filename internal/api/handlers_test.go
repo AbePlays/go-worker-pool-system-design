@@ -40,7 +40,7 @@ func newTestSetup(t *testing.T, workers int) (*store.Store, *pool.Pool, *http.Se
 	dispCtx, dispCancel := context.WithCancel(context.Background())
 	t.Cleanup(dispCancel)
 	go dispatcher.New(p, s, workers).Run(dispCtx)
-	h := New(p, s)
+	h := New(p, s, 3)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/jobs", h.CreateJob)
 	mux.HandleFunc("GET /api/jobs/{id}", h.GetJob)

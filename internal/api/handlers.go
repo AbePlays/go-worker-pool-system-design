@@ -13,8 +13,9 @@ import (
 )
 
 type Handler struct {
-	pool  *pool.Pool
-	store *store.Store
+	pool        *pool.Pool
+	store       *store.Store
+	maxAttempts int
 }
 
 type CreateJobRequest struct {
@@ -24,10 +25,11 @@ type CreateJobRequest struct {
 
 const maxBodySize = 64 << 10
 
-func New(pool *pool.Pool, store *store.Store) *Handler {
+func New(pool *pool.Pool, store *store.Store, maxAttempts int) *Handler {
 	return &Handler{
-		pool:  pool,
-		store: store,
+		pool:        pool,
+		store:       store,
+		maxAttempts: maxAttempts,
 	}
 }
 
@@ -56,10 +58,11 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	j := job.Job{
-		ID:      uuid.NewString(),
-		Type:    req.Type,
-		Payload: req.Payload,
-		Status:  job.StatusPending,
+		ID:          uuid.NewString(),
+		Type:        req.Type,
+		Payload:     req.Payload,
+		Status:      job.StatusPending,
+		MaxAttempts: h.maxAttempts,
 	}
 	if err := h.store.Save(r.Context(), j); err != nil {
 		slog.Error("job save failed", "job_id", j.ID, "error", err.Error())

@@ -10,6 +10,7 @@ import (
 type Config struct {
 	DatabaseUrl string
 	JobTimeout  time.Duration
+	MaxAttempts int
 	Port        string
 	Workers     int
 }
@@ -49,9 +50,22 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("DATABASE_URL environment variable not set")
 	}
 
+	maxAttemptsStr := os.Getenv("MAX_ATTEMPTS")
+	if maxAttemptsStr == "" {
+		return Config{}, fmt.Errorf("MAX_ATTEMPTS environment variable not set")
+	}
+	maxAttempts, err := strconv.Atoi(maxAttemptsStr)
+	if err != nil {
+		return Config{}, fmt.Errorf("MAX_ATTEMPTS must be integer: %w", err)
+	}
+	if maxAttempts <= 0 || maxAttempts > 10 {
+		return Config{}, fmt.Errorf("MAX_ATTEMPTS must be 1..10, got %d", maxAttempts)
+	}
+
 	return Config{
 		DatabaseUrl: databaseUrl,
 		JobTimeout:  time.Duration(timeout) * time.Second,
+		MaxAttempts: maxAttempts,
 		Port:        port,
 		Workers:     workers,
 	}, nil

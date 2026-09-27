@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -44,8 +45,8 @@ func (p *Store) Save(ctx context.Context, j job.Job) error {
 	}
 
 	_, err = p.db.Exec(ctx,
-		`INSERT INTO jobs (id, type, payload, status) VALUES ($1, $2, $3, $4)`,
-		j.ID, j.Type, string(payload), string(j.Status),
+		`INSERT INTO jobs (id, type, payload, status, attempts, max_attempts, next_run_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		j.ID, j.Type, string(payload), string(j.Status), j.Attempts, j.MaxAttempts, j.NextRunAt,
 	)
 	return err
 }
@@ -57,9 +58,9 @@ func (p *Store) GetByID(ctx context.Context, id string) (job.Job, bool, error) {
 	var lastErr *string
 
 	err := p.db.QueryRow(ctx,
-		`SELECT id, type, payload, status, result, last_error, created_at, updated_at FROM jobs WHERE id = $1`,
+		`SELECT id, type, payload, status, result, last_error, created_at, updated_at, attempts, max_attempts, next_run_at FROM jobs WHERE id = $1`,
 		id,
-	).Scan(&j.ID, &j.Type, &payload, &j.Status, &result, &lastErr, &j.CreatedAt, &j.UpdatedAt)
+	).Scan(&j.ID, &j.Type, &payload, &j.Status, &result, &lastErr, &j.CreatedAt, &j.UpdatedAt, &j.Attempts, &j.MaxAttempts, &j.NextRunAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return job.Job{}, false, nil
@@ -105,8 +106,8 @@ func (p *Store) Update(ctx context.Context, j job.Job) (bool, error) {
 	}
 
 	tag, err := p.db.Exec(ctx,
-		`UPDATE jobs SET status = $2, result = $3, last_error = $4, updated_at = NOW() WHERE id = $1`,
-		j.ID, string(j.Status), resultJSON, lastErr,
+		`UPDATE jobs SET status = $2, result = $3, last_error = $4, updated_at = NOW(), attempts = $5, next_run_at = $6 WHERE id = $1`,
+		j.ID, string(j.Status), resultJSON, lastErr, j.Attempts, j.NextRunAt,
 	)
 	if err != nil {
 		return false, err
@@ -116,17 +117,20 @@ func (p *Store) Update(ctx context.Context, j job.Job) (bool, error) {
 }
 
 func (p *Store) Claim(ctx context.Context, limit int) ([]job.Job, error) {
+	now := time.Now()
+
 	rows, err := p.db.Query(ctx,
 		`UPDATE jobs SET status = 'running', updated_at = NOW()
 		WHERE id IN (
 			SELECT id FROM jobs
 			WHERE status = 'pending'
+			AND next_run_at <= $2
 			ORDER BY created_at
 			FOR UPDATE SKIP LOCKED
 			LIMIT $1
 		)
-		RETURNING id, type, payload, status, result, last_error, created_at, updated_at`,
-		limit,
+		RETURNING id, type, payload, status, result, last_error, created_at, updated_at, attempts, max_attempts, next_run_at`,
+		limit, now,
 	)
 	if err != nil {
 		return nil, err
@@ -140,7 +144,7 @@ func (p *Store) Claim(ctx context.Context, limit int) ([]job.Job, error) {
 		var result []byte
 		var lastErr *string
 
-		if err := rows.Scan(&j.ID, &j.Type, &payload, &j.Status, &result, &lastErr, &j.CreatedAt, &j.UpdatedAt); err != nil {
+		if err := rows.Scan(&j.ID, &j.Type, &payload, &j.Status, &result, &lastErr, &j.CreatedAt, &j.UpdatedAt, &j.Attempts, &j.MaxAttempts, &j.NextRunAt); err != nil {
 			return nil, err
 		}
 		if len(payload) > 0 {

@@ -209,3 +209,78 @@ func TestShutdownDrains(t *testing.T) {
 		t.Fatalf("expected drained done, got %s", got.Status)
 	}
 }
+
+func TestBackoffForAttempt(t *testing.T) {
+	cases := map[int]time.Duration{
+		1:  2 * time.Second,
+		2:  4 * time.Second,
+		3:  8 * time.Second,
+		4:  16 * time.Second,
+		5:  32 * time.Second,
+		6:  60 * time.Second,
+		10: 60 * time.Second,
+	}
+	for attempt, want := range cases {
+		if got := backoffForAttempt(attempt); got != want {
+			t.Fatalf("attempt %d: expected %v, got %v", attempt, want, got)
+		}
+	}
+}
+
+func waitForAttempts(t *testing.T, s *store.Store, id string, want int, timeout time.Duration) job.Job {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		got, ok, err := s.GetByID(context.Background(), id)
+		if err != nil {
+			t.Fatalf("get %s: %v", id, err)
+		}
+		if ok && got.Attempts == want {
+			return got
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timeout waiting for %s attempts=%d, got %+v", id, want, got)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestRetryScheduled(t *testing.T) {
+	s := newTestStore(t)
+	p := New(s, 30*time.Second, 1)
+	p.Start()
+	defer p.Stop()
+
+	j := newJob(-5)
+	j.MaxAttempts = 3
+	mustSave(t, s, j)
+	p.Submit(j.ID)
+
+	got := waitForAttempts(t, s, j.ID, 1, 5*time.Second)
+	if got.Status != job.StatusPending {
+		t.Fatalf("expected pending retry, got %s", got.Status)
+	}
+	if !got.NextRunAt.After(time.Now()) {
+		t.Fatalf("expected future next_run_at, got %v", got.NextRunAt)
+	}
+	if got.LastError == "" {
+		t.Fatal("expected LastError on retry")
+	}
+}
+
+func TestRetryExhausted(t *testing.T) {
+	s := newTestStore(t)
+	p := New(s, 30*time.Second, 1)
+	p.Start()
+	defer p.Stop()
+
+	j := newJob(-5)
+	j.MaxAttempts = 1
+	mustSave(t, s, j)
+	p.Submit(j.ID)
+
+	got := waitFor(t, s, j.ID, job.StatusFailed, 5*time.Second)
+	if got.Attempts != 1 {
+		t.Fatalf("expected 1 attempt, got %d", got.Attempts)
+	}
+}
