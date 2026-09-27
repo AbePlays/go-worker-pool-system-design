@@ -3,16 +3,37 @@ package pool
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
+	_ "image/png"
 	"io"
 	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
+	"golang.org/x/image/draw"
+
 	"github.com/AbePlays/go-worker-pool-system-design/internal/job"
 	"github.com/AbePlays/go-worker-pool-system-design/internal/store"
+)
+
+var imageLadder = []struct {
+	width   int
+	quality int
+}{
+	{800, 75},
+	{400, 50},
+	{200, 25},
+}
+
+const (
+	maxImageBytes     = 2 << 20
+	maxImagePixels    = 8000
+	maxRenditionBytes = 512 << 10
 )
 
 type Pool struct {
@@ -95,6 +116,9 @@ func (p *Pool) worker() {
 		case "webhook":
 			p.runWebhook(j)
 			continue
+		case "image":
+			p.runImage(j)
+			continue
 		case "sleep":
 		default:
 			p.fail(j, fmt.Sprintf("unknown job type %q", j.Type))
@@ -176,6 +200,104 @@ func (p *Pool) runWebhook(j job.Job) {
 		slog.Error("job update failed", "job_id", j.ID, "error", err.Error())
 	} else {
 		slog.Info("job done", "job_id", j.ID, "type", j.Type, "status_code", resp.StatusCode)
+	}
+}
+
+func (p *Pool) failPermanent(j job.Job, reason string) {
+	j.Attempts++
+	j.Status = job.StatusFailed
+	j.LastError = reason
+	j.Result = nil
+	if _, err := p.store.Update(context.Background(), j); err != nil {
+		slog.Error("job update failed", "job_id", j.ID, "error", err.Error())
+	} else {
+		slog.Error("job failed", "job_id", j.ID, "type", j.Type, "error", j.LastError, "attempts", j.Attempts)
+	}
+}
+
+func (p *Pool) runImage(j job.Job) {
+	dbCtx := context.Background()
+
+	j.Status = job.StatusRunning
+	if _, err := p.store.Update(dbCtx, j); err != nil {
+		slog.Error("job update failed", "job_id", j.ID, "error", err.Error())
+		return
+	}
+	slog.Info("job started", "job_id", j.ID, "type", j.Type, "image_url", j.Payload.ImageUrl)
+
+	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, j.Payload.ImageUrl, nil)
+	if err != nil {
+		p.failPermanent(j, fmt.Sprintf("image request failed: %v", err))
+		return
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		p.failPermanent(j, fmt.Sprintf("image fetch failed: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		p.failPermanent(j, fmt.Sprintf("image bad status: %d", resp.StatusCode))
+		return
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxImageBytes+1))
+	if err != nil {
+		p.failPermanent(j, fmt.Sprintf("image read failed: %v", err))
+		return
+	}
+	if len(raw) > maxImageBytes {
+		p.failPermanent(j, "image too large")
+		return
+	}
+
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(raw))
+	if err != nil {
+		p.failPermanent(j, fmt.Sprintf("image decode failed: %v", err))
+		return
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > maxImagePixels || cfg.Height > maxImagePixels {
+		p.failPermanent(j, fmt.Sprintf("image dimensions rejected: %dx%d", cfg.Width, cfg.Height))
+		return
+	}
+	src, _, err := image.Decode(bytes.NewReader(raw))
+	if err != nil {
+		p.failPermanent(j, fmt.Sprintf("image decode failed: %v", err))
+		return
+	}
+
+	renditions := make([]job.Rendition, 0, len(imageLadder))
+	for _, rung := range imageLadder {
+		w := min(rung.width, cfg.Width)
+		h := max(cfg.Height*w/cfg.Width, 1)
+		dst := image.NewRGBA(image.Rect(0, 0, w, h))
+		draw.ApproxBiLinear.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil)
+		var buf bytes.Buffer
+		if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: rung.quality}); err != nil {
+			p.failPermanent(j, fmt.Sprintf("image encode failed: %v", err))
+			return
+		}
+		if buf.Len() > maxRenditionBytes {
+			p.failPermanent(j, "image rendition too large")
+			return
+		}
+		renditions = append(renditions, job.Rendition{
+			Quality: rung.quality,
+			Width:   w,
+			Height:  h,
+			Data:    base64.StdEncoding.EncodeToString(buf.Bytes()),
+		})
+	}
+
+	j.Status = job.StatusDone
+	j.Result = job.ImageResult{OriginalWidth: cfg.Width, OriginalHeight: cfg.Height, Renditions: renditions}
+	j.LastError = ""
+	if _, err := p.store.Update(dbCtx, j); err != nil {
+		slog.Error("job update failed", "job_id", j.ID, "error", err.Error())
+	} else {
+		slog.Info("job done", "job_id", j.ID, "type", j.Type, "renditions", len(renditions))
 	}
 }
 

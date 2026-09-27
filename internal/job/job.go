@@ -14,7 +14,21 @@ const (
 type Payload struct {
 	Body       string `json:"body,omitempty"`
 	DurationMs int    `json:"duration_ms"`
+	ImageUrl   string `json:"image_url,omitempty"`
 	Url        string `json:"url,omitempty"`
+}
+
+type Rendition struct {
+	Quality int    `json:"quality"`
+	Width   int    `json:"width"`
+	Height  int    `json:"height"`
+	Data    string `json:"data"`
+}
+
+type ImageResult struct {
+	OriginalWidth  int         `json:"original_width"`
+	OriginalHeight int         `json:"original_height"`
+	Renditions     []Rendition `json:"renditions"`
 }
 
 type Job struct {

@@ -222,6 +222,35 @@ func TestCreateWebhookBadURL400(t *testing.T) {
 	}
 }
 
+func TestCreateImageGood202(t *testing.T) {
+	_, _, mux := newTestSetup(t, 2)
+
+	body := `{"type":"image","payload":{"image_url":"https://example.com/photo.jpg"}}`
+	req := httptest.NewRequest("POST", "/api/jobs", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateImageBad400(t *testing.T) {
+	_, _, mux := newTestSetup(t, 2)
+
+	for _, body := range []string{
+		`{"type":"image","payload":{}}`,
+		`{"type":"image","payload":{"image_url":""}}`,
+		`{"type":"image","payload":{"image_url":"http://127.0.0.1/p.jpg"}}`,
+	} {
+		req := httptest.NewRequest("POST", "/api/jobs", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for %s, got %d", body, rec.Code)
+		}
+	}
+}
+
 func postJob(t *testing.T, mux *http.ServeMux, key, body string) (int, string) {
 	t.Helper()
 	req := httptest.NewRequest("POST", "/api/jobs", strings.NewReader(body))

@@ -70,6 +70,11 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid payload body: must be valid JSON", http.StatusBadRequest)
 			return
 		}
+	case "image":
+		if !utils.ValidateUrl(req.Payload.ImageUrl) {
+			http.Error(w, "invalid image url", http.StatusBadRequest)
+			return
+		}
 	default:
 		http.Error(w, "invalid job type", http.StatusBadRequest)
 		return

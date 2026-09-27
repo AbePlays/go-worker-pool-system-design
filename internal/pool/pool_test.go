@@ -1,8 +1,14 @@
 package pool
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -394,5 +400,95 @@ func TestWebhookRetryThenSucceed(t *testing.T) {
 	}
 	if calls.Load() != 2 {
 		t.Fatalf("expected 2 deliveries, got %d", calls.Load())
+	}
+}
+
+func testPNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.Set(x, y, color.RGBA{uint8(x % 256), uint8(y % 256), 128, 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode test png: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestImageSuccess(t *testing.T) {
+	raw := testPNG(t, 1000, 500)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(raw)
+	}))
+	defer srv.Close()
+
+	s := newTestStore(t)
+	p := New(s, 30*time.Second, 1)
+	p.Start()
+	defer p.Shutdown()
+
+	j := job.Job{ID: uuid.NewString(), Type: "image", Payload: job.Payload{ImageUrl: srv.URL}, Status: job.StatusPending, MaxAttempts: 3}
+	mustSave(t, s, j)
+	p.Submit(j.ID)
+
+	got := waitFor(t, s, j.ID, job.StatusDone, 10*time.Second)
+	if got.Attempts != 0 {
+		t.Fatalf("expected 0 attempts, got %d", got.Attempts)
+	}
+
+	stored, ok, err := s.GetByID(context.Background(), j.ID)
+	if err != nil || !ok {
+		t.Fatalf("get: %v found=%v", err, ok)
+	}
+	resJSON, _ := json.Marshal(stored.Result)
+	var res job.ImageResult
+	if err := json.Unmarshal(resJSON, &res); err != nil {
+		t.Fatalf("result shape: %v (%s)", err, string(resJSON))
+	}
+	if res.OriginalWidth != 1000 || res.OriginalHeight != 500 {
+		t.Fatalf("bad original dims: %+v", res)
+	}
+	want := []struct {
+		w, q int
+	}{{800, 75}, {400, 50}, {200, 25}}
+	if len(res.Renditions) != 3 {
+		t.Fatalf("expected 3 renditions, got %d", len(res.Renditions))
+	}
+	for i, r := range res.Renditions {
+		if r.Width != want[i].w || r.Quality != want[i].q || r.Height != 500*r.Width/1000 {
+			t.Fatalf("bad rendition %d: %+v", i, r)
+		}
+		data, err := base64.StdEncoding.DecodeString(r.Data)
+		if err != nil || len(data) < 2 || data[0] != 0xFF || data[1] != 0xD8 {
+			t.Fatalf("rendition %d not a jpeg", i)
+		}
+	}
+}
+
+func TestImageCorruptPermanent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("this is not an image"))
+	}))
+	defer srv.Close()
+
+	s := newTestStore(t)
+	p := New(s, 30*time.Second, 1)
+	p.Start()
+	defer p.Shutdown()
+
+	j := job.Job{ID: uuid.NewString(), Type: "image", Payload: job.Payload{ImageUrl: srv.URL}, Status: job.StatusPending, MaxAttempts: 3}
+	mustSave(t, s, j)
+	p.Submit(j.ID)
+
+	got := waitFor(t, s, j.ID, job.StatusFailed, 5*time.Second)
+	if got.Attempts != 1 {
+		t.Fatalf("expected 1 attempt, got %d", got.Attempts)
+	}
+	if got.LastError == "" {
+		t.Fatal("expected LastError")
 	}
 }
