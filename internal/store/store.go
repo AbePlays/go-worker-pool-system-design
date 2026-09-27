@@ -7,10 +7,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/AbePlays/go-worker-pool-system-design/internal/job"
 )
+
+var ErrDuplicate = errors.New("duplicate idempotency key")
 
 type Store struct {
 	db *pgxpool.Pool
@@ -44,11 +47,23 @@ func (p *Store) Save(ctx context.Context, j job.Job) error {
 		return err
 	}
 
+	var key any
+	if j.IdempotencyKey != "" {
+		key = j.IdempotencyKey
+	}
+
 	_, err = p.db.Exec(ctx,
-		`INSERT INTO jobs (id, type, payload, status, attempts, max_attempts, next_run_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		j.ID, j.Type, string(payload), string(j.Status), j.Attempts, j.MaxAttempts, j.NextRunAt,
+		`INSERT INTO jobs (id, type, payload, status, attempts, max_attempts, next_run_at, idempotency_key) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		j.ID, j.Type, string(payload), string(j.Status), j.Attempts, j.MaxAttempts, j.NextRunAt, key,
 	)
-	return err
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return ErrDuplicate
+		}
+		return err
+	}
+	return nil
 }
 
 func (p *Store) GetByID(ctx context.Context, id string) (job.Job, bool, error) {
@@ -56,16 +71,21 @@ func (p *Store) GetByID(ctx context.Context, id string) (job.Job, bool, error) {
 	var payload []byte
 	var result []byte
 	var lastErr *string
+	var idemKey *string
 
 	err := p.db.QueryRow(ctx,
-		`SELECT id, type, payload, status, result, last_error, created_at, updated_at, attempts, max_attempts, next_run_at FROM jobs WHERE id = $1`,
+		`SELECT id, type, payload, status, result, last_error, created_at, updated_at, attempts, max_attempts, next_run_at, idempotency_key FROM jobs WHERE id = $1`,
 		id,
-	).Scan(&j.ID, &j.Type, &payload, &j.Status, &result, &lastErr, &j.CreatedAt, &j.UpdatedAt, &j.Attempts, &j.MaxAttempts, &j.NextRunAt)
+	).Scan(&j.ID, &j.Type, &payload, &j.Status, &result, &lastErr, &j.CreatedAt, &j.UpdatedAt, &j.Attempts, &j.MaxAttempts, &j.NextRunAt, &idemKey)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return job.Job{}, false, nil
 		}
 		return job.Job{}, false, err
+	}
+
+	if idemKey != nil {
+		j.IdempotencyKey = *idemKey
 	}
 
 	if len(payload) > 0 {
@@ -129,7 +149,7 @@ func (p *Store) Claim(ctx context.Context, limit int) ([]job.Job, error) {
 			FOR UPDATE SKIP LOCKED
 			LIMIT $1
 		)
-		RETURNING id, type, payload, status, result, last_error, created_at, updated_at, attempts, max_attempts, next_run_at`,
+		RETURNING id, type, payload, status, result, last_error, created_at, updated_at, attempts, max_attempts, next_run_at, idempotency_key`,
 		limit, now,
 	)
 	if err != nil {
@@ -143,8 +163,9 @@ func (p *Store) Claim(ctx context.Context, limit int) ([]job.Job, error) {
 		var payload []byte
 		var result []byte
 		var lastErr *string
+		var idemKey *string
 
-		if err := rows.Scan(&j.ID, &j.Type, &payload, &j.Status, &result, &lastErr, &j.CreatedAt, &j.UpdatedAt, &j.Attempts, &j.MaxAttempts, &j.NextRunAt); err != nil {
+		if err := rows.Scan(&j.ID, &j.Type, &payload, &j.Status, &result, &lastErr, &j.CreatedAt, &j.UpdatedAt, &j.Attempts, &j.MaxAttempts, &j.NextRunAt, &idemKey); err != nil {
 			return nil, err
 		}
 		if len(payload) > 0 {
@@ -164,10 +185,55 @@ func (p *Store) Claim(ctx context.Context, limit int) ([]job.Job, error) {
 		if lastErr != nil {
 			j.LastError = *lastErr
 		}
+		if idemKey != nil {
+			j.IdempotencyKey = *idemKey
+		}
 		out = append(out, j)
 	}
 
 	return out, rows.Err()
+}
+
+func (p *Store) GetByIdempotencyKey(ctx context.Context, key string) (job.Job, bool, error) {
+	var j job.Job
+	var payload []byte
+	var result []byte
+	var lastErr *string
+	var idemKey *string
+
+	err := p.db.QueryRow(ctx,
+		`SELECT id, type, payload, status, result, last_error, created_at, updated_at, attempts, max_attempts, next_run_at, idempotency_key FROM jobs WHERE idempotency_key = $1`,
+		key,
+	).Scan(&j.ID, &j.Type, &payload, &j.Status, &result, &lastErr, &j.CreatedAt, &j.UpdatedAt, &j.Attempts, &j.MaxAttempts, &j.NextRunAt, &idemKey)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return job.Job{}, false, nil
+		}
+		return job.Job{}, false, err
+	}
+
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &j.Payload); err != nil {
+			return job.Job{}, false, err
+		}
+	}
+
+	if len(result) > 0 {
+		var r any
+		if err := json.Unmarshal(result, &r); err != nil {
+			return job.Job{}, false, err
+		}
+		j.Result = r
+	}
+
+	if lastErr != nil {
+		j.LastError = *lastErr
+	}
+	if idemKey != nil {
+		j.IdempotencyKey = *idemKey
+	}
+
+	return j, true, nil
 }
 
 func (p *Store) RequeueRunning(ctx context.Context) (int64, error) {

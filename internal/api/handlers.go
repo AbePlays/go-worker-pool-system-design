@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -37,6 +38,12 @@ func New(pool *pool.Pool, store *store.Store, maxAttempts int) *Handler {
 func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 
+	idempotencyKey := r.Header.Get("Idempotency-Key")
+	if len(idempotencyKey) > 64 {
+		http.Error(w, "idempotency key too long", http.StatusBadRequest)
+		return
+	}
+
 	var req CreateJobRequest
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&req); err != nil {
@@ -69,13 +76,36 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	j := job.Job{
-		ID:          uuid.NewString(),
-		Type:        req.Type,
-		Payload:     req.Payload,
-		Status:      job.StatusPending,
-		MaxAttempts: h.maxAttempts,
+		ID:             uuid.NewString(),
+		IdempotencyKey: idempotencyKey,
+		Type:           req.Type,
+		Payload:        req.Payload,
+		Status:         job.StatusPending,
+		MaxAttempts:    h.maxAttempts,
 	}
+
 	if err := h.store.Save(r.Context(), j); err != nil {
+		if errors.Is(err, store.ErrDuplicate) {
+			existing, found, ferr := h.store.GetByIdempotencyKey(r.Context(), idempotencyKey)
+			if ferr != nil {
+				slog.Error("job fetch failed", "error", ferr.Error())
+				http.Error(w, "store unavailable", http.StatusInternalServerError)
+				return
+			}
+
+			if !found {
+				slog.Error("duplicate key without row", "job_id", j.ID)
+				http.Error(w, "store unavailable", http.StatusInternalServerError)
+				return
+			}
+
+			slog.Info("job deduplicated", "job_id", existing.ID)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]string{"id": existing.ID})
+			return
+		}
+
 		slog.Error("job save failed", "job_id", j.ID, "error", err.Error())
 		http.Error(w, "store unavailable", http.StatusInternalServerError)
 		return

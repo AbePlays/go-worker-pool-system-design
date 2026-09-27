@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -213,6 +214,85 @@ func TestCreateWebhookBadURL400(t *testing.T) {
 		mux.ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400 for %s, got %d", body, rec.Code)
+		}
+	}
+}
+
+func postJob(t *testing.T, mux *http.ServeMux, key, body string) (int, string) {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/api/jobs", strings.NewReader(body))
+	if key != "" {
+		req.Header.Set("Idempotency-Key", key)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	var resp map[string]string
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+	return rec.Code, resp["id"]
+}
+
+func TestIdempotentSameKey(t *testing.T) {
+	_, _, mux := newTestSetup(t, 2)
+	body := `{"type":"sleep","payload":{"duration_ms":10}}`
+
+	code, first := postJob(t, mux, "key-abc", body)
+	if code != http.StatusAccepted || first == "" {
+		t.Fatalf("expected 202 + id, got %d %q", code, first)
+	}
+	code, second := postJob(t, mux, "key-abc", body)
+	if code != http.StatusOK || second != first {
+		t.Fatalf("expected 200 same id, got %d %q vs %q", code, second, first)
+	}
+}
+
+func TestIdempotentDifferentKeys(t *testing.T) {
+	_, _, mux := newTestSetup(t, 2)
+	body := `{"type":"sleep","payload":{"duration_ms":10}}`
+
+	_, first := postJob(t, mux, "key-one", body)
+	_, second := postJob(t, mux, "key-two", body)
+	if first == second {
+		t.Fatalf("expected distinct ids, got %q twice", first)
+	}
+}
+
+func TestIdempotentNoKeyDuplicates(t *testing.T) {
+	_, _, mux := newTestSetup(t, 2)
+	body := `{"type":"sleep","payload":{"duration_ms":10}}`
+
+	_, first := postJob(t, mux, "", body)
+	_, second := postJob(t, mux, "", body)
+	if first == second {
+		t.Fatalf("expected distinct ids without key, got %q twice", first)
+	}
+}
+
+func TestIdempotentKeyTooLong(t *testing.T) {
+	_, _, mux := newTestSetup(t, 2)
+	code, _ := postJob(t, mux, strings.Repeat("k", 65), `{"type":"sleep","payload":{"duration_ms":10}}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", code)
+	}
+}
+
+func TestIdempotentConcurrentSameKey(t *testing.T) {
+	_, _, mux := newTestSetup(t, 2)
+	body := `{"type":"sleep","payload":{"duration_ms":10}}`
+
+	const n = 10
+	ids := make([]string, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, ids[i] = postJob(t, mux, "key-race", body)
+		}()
+	}
+	wg.Wait()
+	for _, id := range ids[1:] {
+		if id != ids[0] || ids[0] == "" {
+			t.Fatalf("expected single id, got %q vs %q", ids[0], id)
 		}
 	}
 }
