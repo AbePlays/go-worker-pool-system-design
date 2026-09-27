@@ -18,6 +18,7 @@ type Handler struct {
 	pool        *pool.Pool
 	store       *store.Store
 	maxAttempts int
+	queueMax    int
 }
 
 type CreateJobRequest struct {
@@ -27,11 +28,12 @@ type CreateJobRequest struct {
 
 const maxBodySize = 64 << 10
 
-func New(pool *pool.Pool, store *store.Store, maxAttempts int) *Handler {
+func New(pool *pool.Pool, store *store.Store, maxAttempts, queueMax int) *Handler {
 	return &Handler{
 		pool:        pool,
 		store:       store,
 		maxAttempts: maxAttempts,
+		queueMax:    queueMax,
 	}
 }
 
@@ -75,6 +77,29 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if full, err := h.queueFull(r); err != nil {
+		slog.Error("queue count failed", "error", err.Error())
+		http.Error(w, "store unavailable", http.StatusInternalServerError)
+		return
+	} else if full {
+		if idempotencyKey != "" {
+			if existing, found, err := h.store.GetByIdempotencyKey(r.Context(), idempotencyKey); err != nil {
+				slog.Error("job fetch failed", "error", err.Error())
+				http.Error(w, "store unavailable", http.StatusInternalServerError)
+				return
+			} else if found {
+				slog.Info("job deduplicated", "job_id", existing.ID)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(map[string]string{"id": existing.ID})
+				return
+			}
+		}
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "queue full", http.StatusTooManyRequests)
+		return
+	}
+
 	j := job.Job{
 		ID:             uuid.NewString(),
 		IdempotencyKey: idempotencyKey,
@@ -115,6 +140,14 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]string{"id": j.ID})
+}
+
+func (h *Handler) queueFull(r *http.Request) (bool, error) {
+	n, err := h.store.PendingCount(r.Context())
+	if err != nil {
+		return false, err
+	}
+	return n >= h.queueMax, nil
 }
 
 func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request) {

@@ -25,6 +25,10 @@ func testDBURL() string {
 }
 
 func newTestSetup(t *testing.T, workers int) (*store.Store, *pool.Pool, *http.ServeMux) {
+	return newTestSetupWithLimits(t, workers, 3, 1000)
+}
+
+func newTestSetupWithLimits(t *testing.T, workers, maxAttempts, queueMax int) (*store.Store, *pool.Pool, *http.ServeMux) {
 	t.Helper()
 	ctx := context.Background()
 	s, err := store.New(ctx, testDBURL())
@@ -41,7 +45,7 @@ func newTestSetup(t *testing.T, workers int) (*store.Store, *pool.Pool, *http.Se
 	dispCtx, dispCancel := context.WithCancel(context.Background())
 	t.Cleanup(dispCancel)
 	go dispatcher.New(p, s, workers).Run(dispCtx)
-	h := New(p, s, 3)
+	h := New(p, s, maxAttempts, queueMax)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/jobs", h.CreateJob)
 	mux.HandleFunc("GET /api/jobs/{id}", h.GetJob)
@@ -294,5 +298,50 @@ func TestIdempotentConcurrentSameKey(t *testing.T) {
 		if id != ids[0] || ids[0] == "" {
 			t.Fatalf("expected single id, got %q vs %q", ids[0], id)
 		}
+	}
+}
+
+func TestQueueFull429(t *testing.T) {
+	_, _, mux := newTestSetupWithLimits(t, 1, 3, 1)
+	body := `{"type":"sleep","payload":{"duration_ms":10}}`
+
+	code, _ := postJob(t, mux, "", body)
+	if code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", code)
+	}
+	req := httptest.NewRequest("POST", "/api/jobs", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d", rec.Code)
+	}
+	if rec.Header().Get("Retry-After") != "5" {
+		t.Fatalf("expected Retry-After 5, got %q", rec.Header().Get("Retry-After"))
+	}
+}
+
+func TestQueueFullDupeBypass(t *testing.T) {
+	_, _, mux := newTestSetupWithLimits(t, 1, 3, 1)
+	body := `{"type":"sleep","payload":{"duration_ms":10}}`
+
+	code, first := postJob(t, mux, "key-cap", body)
+	if code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", code)
+	}
+	code, second := postJob(t, mux, "key-cap", body)
+	if code != http.StatusOK || second != first {
+		t.Fatalf("expected 200 same id under full queue, got %d %q", code, second)
+	}
+}
+
+func TestQueueFullInvalidStill400(t *testing.T) {
+	_, _, mux := newTestSetupWithLimits(t, 1, 3, 1)
+	code, _ := postJob(t, mux, "", `{"type":"sleep","payload":{"duration_ms":10}}`)
+	if code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", code)
+	}
+	code, _ = postJob(t, mux, "", `{"type":"nope","payload":{}}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid under full queue, got %d", code)
 	}
 }

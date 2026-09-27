@@ -236,6 +236,14 @@ func (p *Store) GetByIdempotencyKey(ctx context.Context, key string) (job.Job, b
 	return j, true, nil
 }
 
+func (p *Store) PendingCount(ctx context.Context) (int, error) {
+	var n int
+	err := p.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM jobs WHERE status IN ('pending', 'running')`,
+	).Scan(&n)
+	return n, err
+}
+
 func (p *Store) RequeueRunning(ctx context.Context) (int64, error) {
 	tag, err := p.db.Exec(ctx,
 		`UPDATE jobs SET status = 'pending', updated_at = NOW() WHERE status = 'running'`,

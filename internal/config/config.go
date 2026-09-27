@@ -12,6 +12,7 @@ type Config struct {
 	JobTimeout  time.Duration
 	MaxAttempts int
 	Port        string
+	QueueMax    int
 	Workers     int
 }
 
@@ -62,11 +63,24 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("MAX_ATTEMPTS must be 1..10, got %d", maxAttempts)
 	}
 
+	queueMaxStr := os.Getenv("QUEUE_MAX")
+	if queueMaxStr == "" {
+		return Config{}, fmt.Errorf("QUEUE_MAX environment variable not set")
+	}
+	queueMax, err := strconv.Atoi(queueMaxStr)
+	if err != nil {
+		return Config{}, fmt.Errorf("QUEUE_MAX must be integer: %w", err)
+	}
+	if queueMax <= 0 || queueMax > 100000 {
+		return Config{}, fmt.Errorf("QUEUE_MAX must be 1..100000, got %d", queueMax)
+	}
+
 	return Config{
 		DatabaseUrl: databaseUrl,
 		JobTimeout:  time.Duration(timeout) * time.Second,
 		MaxAttempts: maxAttempts,
 		Port:        port,
+		QueueMax:    queueMax,
 		Workers:     workers,
 	}, nil
 }
