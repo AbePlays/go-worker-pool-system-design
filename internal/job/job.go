@@ -12,7 +12,9 @@ const (
 )
 
 type Payload struct {
-	DurationMs int `json:"duration_ms"`
+	Body       string `json:"body,omitempty"`
+	DurationMs int    `json:"duration_ms"`
+	Url        string `json:"url,omitempty"`
 }
 
 type Job struct {

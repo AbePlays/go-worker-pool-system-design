@@ -9,6 +9,7 @@ import (
 	"github.com/AbePlays/go-worker-pool-system-design/internal/job"
 	"github.com/AbePlays/go-worker-pool-system-design/internal/pool"
 	"github.com/AbePlays/go-worker-pool-system-design/internal/store"
+	"github.com/AbePlays/go-worker-pool-system-design/utils"
 	"github.com/google/uuid"
 )
 
@@ -47,13 +48,23 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Type != "sleep" {
+	switch req.Type {
+	case "sleep":
+		if req.Payload.DurationMs < 0 || req.Payload.DurationMs > 30000 {
+			http.Error(w, "invalid payload duration", http.StatusBadRequest)
+			return
+		}
+	case "webhook":
+		if !utils.ValidateUrl(req.Payload.Url) {
+			http.Error(w, "invalid payload url", http.StatusBadRequest)
+			return
+		}
+		if req.Payload.Body != "" && !json.Valid([]byte(req.Payload.Body)) {
+			http.Error(w, "invalid payload body: must be valid JSON", http.StatusBadRequest)
+			return
+		}
+	default:
 		http.Error(w, "invalid job type", http.StatusBadRequest)
-		return
-	}
-
-	if req.Payload.DurationMs < 0 || req.Payload.DurationMs > 30000 {
-		http.Error(w, "invalid payload duration", http.StatusBadRequest)
 		return
 	}
 

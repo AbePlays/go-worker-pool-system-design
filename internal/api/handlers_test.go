@@ -184,3 +184,35 @@ func TestCreateAfterShutdownAccepted(t *testing.T) {
 		t.Fatalf("expected 202 persisted after shutdown, got %d", rec.Code)
 	}
 }
+
+func TestCreateWebhookGood202(t *testing.T) {
+	_, _, mux := newTestSetup(t, 2)
+
+	body := `{"type":"webhook","payload":{"url":"https://example.com/hook","body":"{\"k\":\"v\"}"}}`
+	req := httptest.NewRequest("POST", "/api/jobs", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateWebhookBadURL400(t *testing.T) {
+	_, _, mux := newTestSetup(t, 2)
+
+	for _, body := range []string{
+		`{"type":"webhook","payload":{}}`,
+		`{"type":"webhook","payload":{"url":""}}`,
+		`{"type":"webhook","payload":{"url":"ftp://example.com/f"}}`,
+		`{"type":"webhook","payload":{"url":"http://127.0.0.1/hook"}}`,
+		`{"type":"webhook","payload":{"url":"http://localhost/hook"}}`,
+		`{"type":"webhook","payload":{"url":"https://example.com/hook","body":"{broken"}}`,
+	} {
+		req := httptest.NewRequest("POST", "/api/jobs", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for %s, got %d", body, rec.Code)
+		}
+	}
+}

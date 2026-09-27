@@ -2,7 +2,12 @@ package pool
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -282,5 +287,117 @@ func TestRetryExhausted(t *testing.T) {
 	got := waitFor(t, s, j.ID, job.StatusFailed, 5*time.Second)
 	if got.Attempts != 1 {
 		t.Fatalf("expected 1 attempt, got %d", got.Attempts)
+	}
+}
+
+func newWebhookJob(url string, maxAttempts int) job.Job {
+	return job.Job{
+		ID:          uuid.NewString(),
+		Type:        "webhook",
+		Payload:     job.Payload{Url: url, Body: `{"hello":"world"}`},
+		Status:      job.StatusPending,
+		MaxAttempts: maxAttempts,
+	}
+}
+
+func TestWebhookSuccess(t *testing.T) {
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	s := newTestStore(t)
+	p := New(s, 30*time.Second, 1)
+	p.Start()
+	defer p.Stop()
+
+	j := newWebhookJob(srv.URL, 3)
+	mustSave(t, s, j)
+	p.Submit(j.ID)
+
+	got := waitFor(t, s, j.ID, job.StatusDone, 5*time.Second)
+	if got.Attempts != 0 {
+		t.Fatalf("expected 0 attempts, got %d", got.Attempts)
+	}
+	if !strings.Contains(string(gotBody), j.ID) {
+		t.Fatalf("expected delivery to include job id, got %s", string(gotBody))
+	}
+}
+
+func TestWebhookExhausted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	s := newTestStore(t)
+	p := New(s, 30*time.Second, 1)
+	p.Start()
+	defer p.Stop()
+
+	j := newWebhookJob(srv.URL, 1)
+	mustSave(t, s, j)
+	p.Submit(j.ID)
+
+	got := waitFor(t, s, j.ID, job.StatusFailed, 5*time.Second)
+	if got.Attempts != 1 {
+		t.Fatalf("expected 1 attempt, got %d", got.Attempts)
+	}
+	if !strings.Contains(got.LastError, "500") {
+		t.Fatalf("expected status in error, got %q", got.LastError)
+	}
+}
+
+func TestWebhookRetryThenSucceed(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			http.Error(w, "flaky", http.StatusBadGateway)
+			return
+		}
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	s := newTestStore(t)
+	p := New(s, 30*time.Second, 1)
+	p.Start()
+	defer p.Stop()
+
+	j := newWebhookJob(srv.URL, 3)
+	mustSave(t, s, j)
+	p.Submit(j.ID)
+
+	retry := waitForAttempts(t, s, j.ID, 1, 5*time.Second)
+	if retry.Status != job.StatusPending {
+		t.Fatalf("expected pending retry, got %s", retry.Status)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		got, _, _ := s.GetByID(context.Background(), j.ID)
+		if time.Now().After(got.NextRunAt) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("retry never became due")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	claimed, err := s.Claim(context.Background(), 1)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("re-claim due retry: %v n=%d", err, len(claimed))
+	}
+	p.Submit(j.ID)
+
+	got := waitFor(t, s, j.ID, job.StatusDone, 5*time.Second)
+	if got.Attempts != 1 {
+		t.Fatalf("expected 1 attempt, got %d", got.Attempts)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("expected 2 deliveries, got %d", calls.Load())
 	}
 }

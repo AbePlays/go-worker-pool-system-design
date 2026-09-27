@@ -1,9 +1,13 @@
 package pool
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
@@ -87,6 +91,16 @@ func (p *Pool) worker() {
 			continue
 		}
 
+		switch j.Type {
+		case "webhook":
+			p.runWebhook(j)
+			continue
+		case "sleep":
+		default:
+			p.fail(j, fmt.Sprintf("unknown job type %q", j.Type))
+			continue
+		}
+
 		if j.Payload.DurationMs < 0 {
 			p.fail(j, fmt.Sprintf("invalid duration_ms %d", j.Payload.DurationMs))
 			continue
@@ -114,6 +128,54 @@ func (p *Pool) worker() {
 			cancel()
 			p.fail(j, "timeout: job exceeded deadline")
 		}
+	}
+}
+
+func (p *Pool) runWebhook(j job.Job) {
+	dbCtx := context.Background()
+
+	j.Status = job.StatusRunning
+	if _, err := p.store.Update(dbCtx, j); err != nil {
+		slog.Error("job update failed", "job_id", j.ID, "error", err.Error())
+		return
+	}
+	slog.Info("job started", "job_id", j.ID, "type", j.Type, "url", j.Payload.Url)
+
+	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
+	defer cancel()
+
+	body, err := json.Marshal(map[string]string{"id": j.ID, "body": j.Payload.Body})
+	if err != nil {
+		p.fail(j, fmt.Sprintf("webhook encode failed: %v", err))
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, j.Payload.Url, bytes.NewReader(body))
+	if err != nil {
+		p.fail(j, fmt.Sprintf("webhook request failed: %v", err))
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		p.fail(j, fmt.Sprintf("webhook delivery failed: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		p.fail(j, fmt.Sprintf("webhook bad status: %d", resp.StatusCode))
+		return
+	}
+
+	j.Status = job.StatusDone
+	j.Result = fmt.Sprintf("POST %d: %s", resp.StatusCode, string(respBody))
+	j.LastError = ""
+	if _, err := p.store.Update(dbCtx, j); err != nil {
+		slog.Error("job update failed", "job_id", j.ID, "error", err.Error())
+	} else {
+		slog.Info("job done", "job_id", j.ID, "type", j.Type, "status_code", resp.StatusCode)
 	}
 }
 
