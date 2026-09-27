@@ -6,16 +6,15 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/AbePlays/go-worker-pool-system-design/internal/job"
-	"github.com/AbePlays/go-worker-pool-system-design/internal/pool"
 	"github.com/AbePlays/go-worker-pool-system-design/internal/store"
 	"github.com/AbePlays/go-worker-pool-system-design/utils"
 	"github.com/google/uuid"
 )
 
 type Handler struct {
-	pool        *pool.Pool
 	store       *store.Store
 	maxAttempts int
 	queueMax    int
@@ -28,9 +27,8 @@ type CreateJobRequest struct {
 
 const maxBodySize = 64 << 10
 
-func New(pool *pool.Pool, store *store.Store, maxAttempts, queueMax int) *Handler {
+func New(store *store.Store, maxAttempts, queueMax int) *Handler {
 	return &Handler{
-		pool:        pool,
 		store:       store,
 		maxAttempts: maxAttempts,
 		queueMax:    queueMax,
@@ -77,11 +75,13 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if full, err := h.queueFull(r); err != nil {
+	queued, err := h.store.PendingCount(r.Context())
+	if err != nil {
 		slog.Error("queue count failed", "error", err.Error())
 		http.Error(w, "store unavailable", http.StatusInternalServerError)
 		return
-	} else if full {
+	}
+	if queued >= h.queueMax {
 		if idempotencyKey != "" {
 			if existing, found, err := h.store.GetByIdempotencyKey(r.Context(), idempotencyKey); err != nil {
 				slog.Error("job fetch failed", "error", err.Error())
@@ -107,6 +107,7 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		Payload:        req.Payload,
 		Status:         job.StatusPending,
 		MaxAttempts:    h.maxAttempts,
+		NextRunAt:      time.Now(),
 	}
 
 	if err := h.store.Save(r.Context(), j); err != nil {
@@ -140,14 +141,6 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]string{"id": j.ID})
-}
-
-func (h *Handler) queueFull(r *http.Request) (bool, error) {
-	n, err := h.store.PendingCount(r.Context())
-	if err != nil {
-		return false, err
-	}
-	return n >= h.queueMax, nil
 }
 
 func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request) {

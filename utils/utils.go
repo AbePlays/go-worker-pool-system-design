@@ -25,13 +25,10 @@ func ValidateUrl(raw string) bool {
 		return false
 	}
 
-	if ip := net.ParseIP(host); ip != nil && isBlockedIP(ip) {
+	if ip := net.ParseIP(host); ip != nil &&
+		(ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsPrivate()) {
 		return false
 	}
 
 	return true
-}
-
-func isBlockedIP(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsPrivate()
 }

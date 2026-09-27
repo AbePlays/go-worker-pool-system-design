@@ -30,7 +30,7 @@ func main() {
 	p.Start()
 	slog.Info("server starting", "port", c.Port, "workers", c.Workers, "job_timeout_s", int(c.JobTimeout.Seconds()))
 
-	server := newServer(c.Port, api.New(p, s, c.MaxAttempts, c.QueueMax))
+	server := newServer(c.Port, api.New(s, c.MaxAttempts, c.QueueMax))
 	d := dispatcher.New(p, s, c.Workers)
 
 	serveUntilSignal(server, d, p)
@@ -97,7 +97,7 @@ func serveUntilSignal(server *http.Server, d *dispatcher.Dispatcher, p *pool.Poo
 	}
 
 	dispCancel()
-	p.Stop()
+	p.Shutdown()
 
 	slog.Info("server shut down gracefully")
 }

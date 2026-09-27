@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -45,7 +46,7 @@ func mustSave(t *testing.T, s *store.Store, j job.Job) {
 	}
 }
 
-func waitFor(t *testing.T, s *store.Store, id string, want job.Status, timeout time.Duration) job.Job {
+func waitForCond(t *testing.T, s *store.Store, id, desc string, timeout time.Duration, match func(job.Job) bool) job.Job {
 	t.Helper()
 	ctx := context.Background()
 	deadline := time.Now().Add(timeout)
@@ -54,14 +55,26 @@ func waitFor(t *testing.T, s *store.Store, id string, want job.Status, timeout t
 		if err != nil {
 			t.Fatalf("get %s: %v", id, err)
 		}
-		if ok && got.Status == want {
+		if ok && match(got) {
 			return got
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("timeout waiting for %s=%s, got %+v", id, want, got)
+			t.Fatalf("timeout waiting for %s %s, got %+v", id, desc, got)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+func waitFor(t *testing.T, s *store.Store, id string, want job.Status, timeout time.Duration) job.Job {
+	return waitForCond(t, s, id, "status="+string(want), timeout, func(got job.Job) bool {
+		return got.Status == want
+	})
+}
+
+func waitForAttempts(t *testing.T, s *store.Store, id string, want int, timeout time.Duration) job.Job {
+	return waitForCond(t, s, id, fmt.Sprintf("attempts=%d", want), timeout, func(got job.Job) bool {
+		return got.Attempts == want
+	})
 }
 
 func newJob(dur int) job.Job {
@@ -72,7 +85,7 @@ func TestSingleJobDone(t *testing.T) {
 	s := newTestStore(t)
 	p := New(s, 30*time.Second, 2)
 	p.Start()
-	defer p.Stop()
+	defer p.Shutdown()
 
 	j := newJob(20)
 	mustSave(t, s, j)
@@ -90,7 +103,7 @@ func TestNegativeDurationFailed(t *testing.T) {
 	s := newTestStore(t)
 	p := New(s, 30*time.Second, 2)
 	p.Start()
-	defer p.Stop()
+	defer p.Shutdown()
 
 	j := newJob(-5)
 	mustSave(t, s, j)
@@ -106,7 +119,7 @@ func TestMissingIDDoesNotCrashWorker(t *testing.T) {
 	s := newTestStore(t)
 	p := New(s, 30*time.Second, 1)
 	p.Start()
-	defer p.Stop()
+	defer p.Shutdown()
 
 	p.Submit("00000000-0000-0000-0000-000000000000") // no such job, worker should skip
 
@@ -121,7 +134,7 @@ func TestBoundedConcurrency(t *testing.T) {
 	workers := 4
 	p := New(s, 30*time.Second, workers)
 	p.Start()
-	defer p.Stop()
+	defer p.Shutdown()
 
 	n := 8
 	dur := 200
@@ -155,7 +168,7 @@ func TestJobTimeout(t *testing.T) {
 	s := newTestStore(t)
 	p := New(s, 50*time.Millisecond, 1)
 	p.Start()
-	defer p.Stop()
+	defer p.Shutdown()
 
 	j := newJob(5000)
 	mustSave(t, s, j)
@@ -188,7 +201,7 @@ func TestDoubleShutdownSafe(t *testing.T) {
 	p.Start()
 	p.Shutdown()
 	p.Shutdown() // must not panic
-	p.Stop()     // alias must not panic
+	p.Shutdown() // must not panic
 }
 
 func TestShutdownDrains(t *testing.T) {
@@ -232,29 +245,11 @@ func TestBackoffForAttempt(t *testing.T) {
 	}
 }
 
-func waitForAttempts(t *testing.T, s *store.Store, id string, want int, timeout time.Duration) job.Job {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for {
-		got, ok, err := s.GetByID(context.Background(), id)
-		if err != nil {
-			t.Fatalf("get %s: %v", id, err)
-		}
-		if ok && got.Attempts == want {
-			return got
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timeout waiting for %s attempts=%d, got %+v", id, want, got)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
 func TestRetryScheduled(t *testing.T) {
 	s := newTestStore(t)
 	p := New(s, 30*time.Second, 1)
 	p.Start()
-	defer p.Stop()
+	defer p.Shutdown()
 
 	j := newJob(-5)
 	j.MaxAttempts = 3
@@ -277,7 +272,7 @@ func TestRetryExhausted(t *testing.T) {
 	s := newTestStore(t)
 	p := New(s, 30*time.Second, 1)
 	p.Start()
-	defer p.Stop()
+	defer p.Shutdown()
 
 	j := newJob(-5)
 	j.MaxAttempts = 1
@@ -312,7 +307,7 @@ func TestWebhookSuccess(t *testing.T) {
 	s := newTestStore(t)
 	p := New(s, 30*time.Second, 1)
 	p.Start()
-	defer p.Stop()
+	defer p.Shutdown()
 
 	j := newWebhookJob(srv.URL, 3)
 	mustSave(t, s, j)
@@ -336,7 +331,7 @@ func TestWebhookExhausted(t *testing.T) {
 	s := newTestStore(t)
 	p := New(s, 30*time.Second, 1)
 	p.Start()
-	defer p.Stop()
+	defer p.Shutdown()
 
 	j := newWebhookJob(srv.URL, 1)
 	mustSave(t, s, j)
@@ -365,7 +360,7 @@ func TestWebhookRetryThenSucceed(t *testing.T) {
 	s := newTestStore(t)
 	p := New(s, 30*time.Second, 1)
 	p.Start()
-	defer p.Stop()
+	defer p.Shutdown()
 
 	j := newWebhookJob(srv.URL, 3)
 	mustSave(t, s, j)

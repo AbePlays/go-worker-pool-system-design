@@ -179,10 +179,6 @@ func (p *Pool) runWebhook(j job.Job) {
 	}
 }
 
-func (p *Pool) Stop() {
-	p.Shutdown()
-}
-
 func (p *Pool) Shutdown() {
 	p.mu.Lock()
 	p.closed = true

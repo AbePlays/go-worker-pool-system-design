@@ -41,11 +41,11 @@ func newTestSetupWithLimits(t *testing.T, workers, maxAttempts, queueMax int) (*
 	}
 	p := pool.New(s, 30*time.Second, workers)
 	p.Start()
-	t.Cleanup(func() { p.Stop() })
+	t.Cleanup(func() { p.Shutdown() })
 	dispCtx, dispCancel := context.WithCancel(context.Background())
 	t.Cleanup(dispCancel)
 	go dispatcher.New(p, s, workers).Run(dispCtx)
-	h := New(p, s, maxAttempts, queueMax)
+	h := New(s, maxAttempts, queueMax)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/jobs", h.CreateJob)
 	mux.HandleFunc("GET /api/jobs/{id}", h.GetJob)

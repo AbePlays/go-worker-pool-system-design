@@ -66,44 +66,51 @@ func (p *Store) Save(ctx context.Context, j job.Job) error {
 	return nil
 }
 
-func (p *Store) GetByID(ctx context.Context, id string) (job.Job, bool, error) {
-	var j job.Job
+func scanJob(row pgx.Row, j *job.Job) error {
 	var payload []byte
 	var result []byte
 	var lastErr *string
 	var idemKey *string
 
-	err := p.db.QueryRow(ctx,
-		`SELECT id, type, payload, status, result, last_error, created_at, updated_at, attempts, max_attempts, next_run_at, idempotency_key FROM jobs WHERE id = $1`,
-		id,
-	).Scan(&j.ID, &j.Type, &payload, &j.Status, &result, &lastErr, &j.CreatedAt, &j.UpdatedAt, &j.Attempts, &j.MaxAttempts, &j.NextRunAt, &idemKey)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return job.Job{}, false, nil
-		}
-		return job.Job{}, false, err
-	}
-
-	if idemKey != nil {
-		j.IdempotencyKey = *idemKey
+	if err := row.Scan(&j.ID, &j.Type, &payload, &j.Status, &result, &lastErr, &j.CreatedAt, &j.UpdatedAt, &j.Attempts, &j.MaxAttempts, &j.NextRunAt, &idemKey); err != nil {
+		return err
 	}
 
 	if len(payload) > 0 {
 		if err := json.Unmarshal(payload, &j.Payload); err != nil {
-			return job.Job{}, false, err
+			return err
 		}
 	}
 
 	if len(result) > 0 {
 		var r any
 		if err := json.Unmarshal(result, &r); err != nil {
-			return job.Job{}, false, err
+			return err
 		}
 		j.Result = r
 	}
 
 	if lastErr != nil {
 		j.LastError = *lastErr
+	}
+	if idemKey != nil {
+		j.IdempotencyKey = *idemKey
+	}
+	return nil
+}
+
+func (p *Store) GetByID(ctx context.Context, id string) (job.Job, bool, error) {
+	var j job.Job
+
+	err := scanJob(p.db.QueryRow(ctx,
+		`SELECT id, type, payload, status, result, last_error, created_at, updated_at, attempts, max_attempts, next_run_at, idempotency_key FROM jobs WHERE id = $1`,
+		id,
+	), &j)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return job.Job{}, false, nil
+		}
+		return job.Job{}, false, err
 	}
 
 	return j, true, nil
@@ -160,33 +167,8 @@ func (p *Store) Claim(ctx context.Context, limit int) ([]job.Job, error) {
 	var out []job.Job
 	for rows.Next() {
 		var j job.Job
-		var payload []byte
-		var result []byte
-		var lastErr *string
-		var idemKey *string
-
-		if err := rows.Scan(&j.ID, &j.Type, &payload, &j.Status, &result, &lastErr, &j.CreatedAt, &j.UpdatedAt, &j.Attempts, &j.MaxAttempts, &j.NextRunAt, &idemKey); err != nil {
+		if err := scanJob(rows, &j); err != nil {
 			return nil, err
-		}
-		if len(payload) > 0 {
-			if err := json.Unmarshal(payload, &j.Payload); err != nil {
-				return nil, err
-			}
-		}
-
-		if len(result) > 0 {
-			var r any
-			if err := json.Unmarshal(result, &r); err != nil {
-				return nil, err
-			}
-			j.Result = r
-		}
-
-		if lastErr != nil {
-			j.LastError = *lastErr
-		}
-		if idemKey != nil {
-			j.IdempotencyKey = *idemKey
 		}
 		out = append(out, j)
 	}
@@ -196,41 +178,16 @@ func (p *Store) Claim(ctx context.Context, limit int) ([]job.Job, error) {
 
 func (p *Store) GetByIdempotencyKey(ctx context.Context, key string) (job.Job, bool, error) {
 	var j job.Job
-	var payload []byte
-	var result []byte
-	var lastErr *string
-	var idemKey *string
 
-	err := p.db.QueryRow(ctx,
+	err := scanJob(p.db.QueryRow(ctx,
 		`SELECT id, type, payload, status, result, last_error, created_at, updated_at, attempts, max_attempts, next_run_at, idempotency_key FROM jobs WHERE idempotency_key = $1`,
 		key,
-	).Scan(&j.ID, &j.Type, &payload, &j.Status, &result, &lastErr, &j.CreatedAt, &j.UpdatedAt, &j.Attempts, &j.MaxAttempts, &j.NextRunAt, &idemKey)
+	), &j)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return job.Job{}, false, nil
 		}
 		return job.Job{}, false, err
-	}
-
-	if len(payload) > 0 {
-		if err := json.Unmarshal(payload, &j.Payload); err != nil {
-			return job.Job{}, false, err
-		}
-	}
-
-	if len(result) > 0 {
-		var r any
-		if err := json.Unmarshal(result, &r); err != nil {
-			return job.Job{}, false, err
-		}
-		j.Result = r
-	}
-
-	if lastErr != nil {
-		j.LastError = *lastErr
-	}
-	if idemKey != nil {
-		j.IdempotencyKey = *idemKey
 	}
 
 	return j, true, nil

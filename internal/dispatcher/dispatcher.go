@@ -29,17 +29,16 @@ func New(pool *pool.Pool, store *store.Store, workers int) *Dispatcher {
 
 func (d *Dispatcher) Run(ctx context.Context) {
 	slog.Info("dispatcher started", "workers", d.workers)
+	defer slog.Info("dispatcher stopped")
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("dispatcher stopped")
 			return
 		default:
 		}
 
 		jobs, err := d.store.Claim(ctx, d.workers)
 		if ctx.Err() != nil {
-			slog.Info("dispatcher stopped")
 			return
 		}
 
@@ -47,7 +46,6 @@ func (d *Dispatcher) Run(ctx context.Context) {
 			slog.Error("dispatcher claim failed", "error", err.Error())
 			select {
 			case <-ctx.Done():
-				slog.Info("dispatcher stopped")
 				return
 			case <-time.After(d.pollEmpty):
 			}
@@ -60,7 +58,6 @@ func (d *Dispatcher) Run(ctx context.Context) {
 
 		for _, job := range jobs {
 			if !d.pool.Submit(job.ID) {
-				slog.Info("dispatcher stopped")
 				return
 			}
 		}

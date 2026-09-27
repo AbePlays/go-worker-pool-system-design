@@ -33,7 +33,7 @@ func TestRunsPendingJobs(t *testing.T) {
 
 	p := pool.New(s, 30*time.Second, 2)
 	p.Start()
-	defer p.Stop()
+	defer p.Shutdown()
 
 	id := uuid.NewString()
 	if err := s.Save(ctx, job.Job{ID: id, Type: "sleep", Payload: job.Payload{DurationMs: 20}, Status: job.StatusPending}); err != nil {
