@@ -1,0 +1,39 @@
+{{define "content"}}
+<div class="about">
+  <div style="font-size:2rem">⚙️</div>
+  <h1>About this little project</h1>
+  <p>This is a background job system built in Go — not just to work, but to practice real system design thinking.</p>
+
+  <h2>What's under the hood</h2>
+  <ul>
+    <li>PostgreSQL as the source of truth</li>
+    <li>Atomic job claiming with SKIP LOCKED</li>
+    <li>Retries with exponential backoff (Sleep, Webhook)</li>
+    <li>Idempotency keys for safe client retries</li>
+    <li>Backpressure: 429 when the queue (1000) is full</li>
+    <li>Three job types: Sleep, Webhook, Image</li>
+    <li>Schema managed via versioned migrations</li>
+  </ul>
+
+  <h2>Planned</h2>
+  <ul>
+    <li>Dead-letter queue with operator replay</li>
+    <li>Signed webhook payloads (HMAC)</li>
+    <li>Per-target throttling for slow endpoints</li>
+  </ul>
+
+  <h2>Tech stack</h2>
+  <ul>
+    <li>Go</li>
+    <li>PostgreSQL</li>
+    <li>Docker Compose</li>
+    <li>Plain HTML &amp; CSS (no JavaScript)</li>
+  </ul>
+
+  <h2>Source</h2>
+  <p>This project is open source. <a href="https://github.com/AbePlays/go-worker-pool-system-design" rel="noopener">View it on GitHub</a>.</p>
+
+  <hr>
+  <p>Made for learning system design the hands-on way.</p>
+</div>
+{{end}}

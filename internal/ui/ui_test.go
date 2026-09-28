@@ -64,6 +64,21 @@ func TestNewForm200(t *testing.T) {
 	}
 }
 
+func TestAbout200(t *testing.T) {
+	h, _ := newTestHandler(t)
+	req := httptest.NewRequest("GET", "/about", nil)
+	rec := httptest.NewRecorder()
+	h.About(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	for _, want := range []string{"Sleep", "Webhook", "Image", "1000"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("expected %q in about", want)
+		}
+	}
+}
+
 func TestDetail404(t *testing.T) {
 	h, _ := newTestHandler(t)
 	req := httptest.NewRequest("GET", "/jobs/00000000-0000-0000-0000-000000000000", nil)

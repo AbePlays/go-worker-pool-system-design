@@ -24,6 +24,7 @@ func page(name string) *template.Template {
 }
 
 var (
+	aboutTmpl  = page("about.html")
 	dashTmpl   = page("dashboard.html")
 	newTmpl    = page("new.html")
 	detailTmpl = page("details.html")
@@ -80,6 +81,10 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		"Jobs":     rows,
 	}
 	render(dashTmpl, w, data)
+}
+
+func (h *Handler) About(w http.ResponseWriter, r *http.Request) {
+	render(aboutTmpl, w, map[string]any{"Title": "About"})
 }
 
 func (h *Handler) NewForm(w http.ResponseWriter, r *http.Request) {

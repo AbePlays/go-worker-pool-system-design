@@ -73,6 +73,7 @@ func newServer(port string, h *api.Handler, u *ui.Handler) *http.Server {
 	mux.HandleFunc("GET /api/jobs/{id}", h.GetJob)
 
 	mux.HandleFunc("GET /", u.Dashboard)
+	mux.HandleFunc("GET /about", u.About)
 	mux.HandleFunc("GET /new", u.NewForm)
 	mux.HandleFunc("POST /new", u.CreateFromForm)
 	mux.HandleFunc("GET /jobs/{id}", u.Detail)
