@@ -1,0 +1,48 @@
+{{define "content"}}
+<div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.35rem;flex-wrap:wrap">
+  <h1 style="margin:0">Job {{.Job.ShortID}}</h1>
+  <span class="pill {{.Job.Status}}">{{.Job.Status}}</span>
+</div>
+<p class="meta">Attempt {{.Job.Attempts}}/{{.Job.MaxAttempts}} · Type: {{.Job.Type}}</p>
+{{if .Job.NextRunText}}
+<p class="meta">Next run: {{.Job.NextRunText}}</p>
+{{end}}
+
+<div class="block" style="margin-top:1.25rem">
+  <h2>Payload</h2>
+  {{if eq .Job.Type "sleep"}}
+    <p>Duration: <strong>{{.Job.Payload.DurationText}}</strong></p>
+  {{else if eq .Job.Type "webhook"}}
+    <p>URL: <a href="{{.Job.Payload.URL}}" rel="noopener" style="color:var(--accent)">{{.Job.Payload.URL}}</a></p>
+    {{if .Job.Payload.Body}}
+    <pre style="margin-top:0.5rem">{{.Job.Payload.Body}}</pre>
+    {{end}}
+    {{if .Job.ResultText}}
+    <p class="meta">Result: {{.Job.ResultText}}</p>
+    {{end}}
+  {{else if eq .Job.Type "image"}}
+    <p>Source: <a href="{{.Job.Payload.URL}}" rel="noopener" style="color:var(--accent)">{{.Job.Payload.URL}}</a></p>
+    {{if .Job.Result.Width}}
+    <p class="meta">Original: {{.Job.Result.Width}}×{{.Job.Result.Height}}</p>
+    <div class="thumbs">
+      {{range .Job.Result.Thumbnails}}
+      <figure>
+        <img src="{{.DataURL}}" alt="{{.Size}}px" width="{{.Size}}">
+        <figcaption>{{.Size}}px</figcaption>
+      </figure>
+      {{end}}
+    </div>
+    {{end}}
+  {{end}}
+</div>
+
+{{if .Job.Error}}
+<div class="error-box" style="margin-bottom:1rem">{{.Job.Error}}</div>
+{{end}}
+
+<div class="block">
+  <h2>Timestamps</h2>
+  <p class="meta">Created · {{.Job.CreatedAt}}</p>
+  <p class="meta">Updated · {{.Job.UpdatedAt}}</p>
+</div>
+{{end}}

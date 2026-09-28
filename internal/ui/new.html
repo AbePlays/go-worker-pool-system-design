@@ -1,0 +1,59 @@
+{{define "content"}}
+<h1>Spin up a job</h1>
+<p class="subtitle">Choose a type, fill the blanks, hit enqueue.</p>
+
+{{if .Error}}
+<div class="error-box" style="margin-bottom:1rem">{{.Error}}</div>
+{{end}}
+
+<div class="form-card">
+  <form method="POST" action="/new">
+    <input type="radio" name="type" id="t-sleep" value="sleep" checked>
+    <input type="radio" name="type" id="t-webhook" value="webhook">
+    <input type="radio" name="type" id="t-image" value="image">
+
+    <div class="type-cards">
+      <label for="t-sleep">
+        <span class="icon">😴</span>
+        <span class="name">Sleep</span>
+        <span class="desc">Pause the worker</span>
+      </label>
+      <label for="t-webhook">
+        <span class="icon">🔗</span>
+        <span class="name">Webhook</span>
+        <span class="desc">POST to a URL</span>
+      </label>
+      <label for="t-image">
+        <span class="icon">🖼️</span>
+        <span class="name">Image</span>
+        <span class="desc">Make thumbnails</span>
+      </label>
+    </div>
+
+    <div class="panels">
+      <div class="type-section" id="panel-sleep">
+        <p class="hint">Waits for a bit, then finishes. Good for trying things out — nothing real happens. Longer than 30 seconds gives up.</p>
+        <label class="field" for="duration">Duration (seconds)</label>
+        <input type="number" id="duration" name="duration" value="5" min="1" max="300">
+      </div>
+
+      <div class="type-section" id="panel-webhook">
+        <p class="hint">Sends your message to a website you choose. If the site is down or says no, it tries again a few times (up to 3) before giving up.</p>
+        <label class="field" for="url">URL</label>
+        <input type="url" id="url" name="url" placeholder="https://httpbin.org/post">
+        <label class="field" for="body" style="margin-top:0.85rem">JSON body</label>
+        <textarea id="body" name="body" placeholder='{"hello":"world"}'></textarea>
+      </div>
+
+      <div class="type-section" id="panel-image">
+        <p class="hint">Downloads a photo and makes 3 smaller copies: good, medium and small quality. A broken or oversized photo stops right away — retrying won't fix it.</p>
+        <label class="field" for="image_url">Image URL</label>
+        <input type="url" id="image_url" name="image_url" placeholder="https://picsum.photos/800">
+      </div>
+    </div>
+
+    <input type="hidden" name="idempotency_key" value="{{.IdempotencyKey}}">
+    <button type="submit">Enqueue</button>
+  </form>
+</div>
+{{end}}

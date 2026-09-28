@@ -1,0 +1,149 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}} · Queue</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⏱️</text></svg>">
+  {{if .Refresh}}<meta http-equiv="refresh" content="5">{{end}}
+  <style>
+    :root {
+      --bg: #f0fdfa; --surface: #fff; --text: #134e4a; --muted: #5b7c7a;
+      --border: #99f6e4; --accent: #0d9488; --accent-soft: #ccfbf1; --lavender: #a78bfa;
+      --pending: #d97706; --running: #2563eb; --done: #059669; --failed: #e11d48;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      background-image:
+        radial-gradient(ellipse at 10% 0%, #ccfbf1 0%, transparent 50%),
+        radial-gradient(ellipse at 90% 100%, #ede9fe 0%, transparent 45%);
+      color: var(--text); line-height: 1.5; min-height: 100vh;
+    }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1rem 1.75rem; background: rgba(255,255,255,0.8);
+      backdrop-filter: blur(10px); border-bottom: 1px solid var(--border);
+    }
+    header a.logo { font-weight: 800; font-size: 1.1rem; color: var(--accent); text-decoration: none; }
+    header a.logo span { color: var(--lavender); font-weight: 600; }
+    header a.btn {
+      background: var(--accent); color: #fff; text-decoration: none;
+      padding: 0.5rem 1.1rem; border-radius: 999px; font-size: 0.875rem; font-weight: 700;
+    }
+    header a.btn:hover { background: #0f766e; }
+    main { max-width: 920px; margin: 2rem auto; padding: 0 1.25rem; }
+    h1 { font-size: 1.55rem; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 1rem; }
+    .subtitle { color: var(--muted); margin-bottom: 1.5rem; margin-top: -0.5rem; }
+    .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.85rem; margin-bottom: 1.35rem; }
+    .card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 18px;
+      padding: 1.15rem 1.1rem; box-shadow: 0 4px 14px rgba(13,148,136,0.06);
+    }
+    .card .label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
+    .card .value { font-size: 1.8rem; font-weight: 800; margin-top: 0.2rem; }
+    .queue-label { font-size: 0.85rem; color: var(--muted); margin-bottom: 0.4rem; font-weight: 600; }
+    .queue-bar { background: #ccfbf1; border-radius: 999px; height: 10px; margin-bottom: 1.6rem; overflow: hidden; }
+    .queue-bar span { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--lavender)); border-radius: 999px; }
+    table {
+      width: 100%; border-collapse: collapse; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 18px; overflow: hidden; font-size: 0.9rem;
+      box-shadow: 0 4px 14px rgba(13,148,136,0.06);
+    }
+    th {
+      text-align: left; padding: 0.7rem 0.9rem; font-size: 0.68rem; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--muted); border-bottom: 1px solid var(--border);
+      background: #f0fdfa; font-weight: 700;
+    }
+    td { padding: 0.75rem 0.9rem; border-bottom: 1px solid #e6fffa; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    a.id { font-family: ui-monospace, monospace; font-weight: 700; color: var(--accent); text-decoration: none; }
+    a.id:hover { color: var(--lavender); }
+    .pill {
+      display: inline-block; padding: 0.2rem 0.65rem; border-radius: 999px;
+      font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .pill.pending { background: #fef3c7; color: #92400e; }
+    .pill.running { background: #dbeafe; color: #1e40af; }
+    .pill.done    { background: #d1fae5; color: #065f46; }
+    .pill.failed  { background: #ffe4e6; color: #9f1239; }
+    .empty { text-align: center; color: var(--muted); padding: 2.5rem 1rem; }
+    label.field {
+      display: block; font-size: 0.75rem; font-weight: 700; color: var(--muted);
+      margin-bottom: 0.35rem; text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    input[type="url"], input[type="number"], textarea {
+      width: 100%; padding: 0.7rem 0.85rem; border: 1.5px solid var(--border);
+      border-radius: 12px; font-size: 0.95rem; font-family: inherit; background: #f0fdfa;
+    }
+    input:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    textarea { min-height: 90px; resize: vertical; }
+    .form-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
+      padding: 1.75rem; box-shadow: 0 4px 14px rgba(13,148,136,0.06);
+    }
+    .type-cards { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; margin-bottom: 1.5rem; }
+    form > input[type="radio"] { position: absolute; opacity: 0; pointer-events: none; }
+    #t-sleep:focus-visible ~ .type-cards label[for="t-sleep"],
+    #t-webhook:focus-visible ~ .type-cards label[for="t-webhook"],
+    #t-image:focus-visible ~ .type-cards label[for="t-image"] { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .type-cards label {
+      display: block; text-align: center; padding: 1.15rem 0.7rem;
+      border: 1.5px solid var(--border); border-radius: 16px; background: #f0fdfa;
+      cursor: pointer; transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+      margin: 0; text-transform: none; letter-spacing: 0;
+    }
+    .type-cards label .icon { font-size: 1.6rem; display: block; margin-bottom: 0.4rem; line-height: 1; }
+    .type-cards label .name { font-weight: 700; font-size: 0.9rem; color: var(--text); display: block; }
+    .type-cards label .desc { font-size: 0.72rem; color: var(--muted); margin-top: 0.2rem; font-weight: 500; display: block; }
+    #t-sleep:checked ~ .type-cards label[for="t-sleep"],
+    #t-webhook:checked ~ .type-cards label[for="t-webhook"],
+    #t-image:checked ~ .type-cards label[for="t-image"] {
+      border-color: var(--accent); background: var(--accent-soft);
+      box-shadow: 0 0 0 3px rgba(13,148,136,0.15);
+    }
+    #t-sleep:checked ~ .type-cards label[for="t-sleep"] .name,
+    #t-webhook:checked ~ .type-cards label[for="t-webhook"] .name,
+    #t-image:checked ~ .type-cards label[for="t-image"] .name { color: var(--accent); }
+    .type-section { display: none; margin-bottom: 1.25rem; }
+    #t-sleep:checked ~ .panels #panel-sleep,
+    #t-webhook:checked ~ .panels #panel-webhook,
+    #t-image:checked ~ .panels #panel-image { display: block; }
+    .hint { font-size: 0.9rem; color: var(--muted); margin-bottom: 0.85rem; }
+    button[type=submit] {
+      background: var(--accent); color: #fff; border: none; padding: 0.75rem 1.2rem;
+      border-radius: 999px; font-size: 0.95rem; font-weight: 700; cursor: pointer; width: 100%;
+    }
+    button[type=submit]:hover { background: #0f766e; }
+    .meta { font-size: 0.9rem; color: var(--muted); margin-top: 0.35rem; }
+    .block {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 18px;
+      padding: 1.25rem 1.35rem; margin-bottom: 1rem; box-shadow: 0 4px 14px rgba(13,148,136,0.06);
+    }
+    .block h2 {
+      font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--muted); margin-bottom: 0.6rem; font-weight: 700;
+    }
+    .thumbs { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.75rem; }
+    .thumbs figure { text-align: center; }
+    .thumbs img { border: 1.5px solid var(--border); border-radius: 14px; display: block; background: #f0fdfa; }
+    .thumbs figcaption { font-size: 0.75rem; color: var(--muted); margin-top: 0.35rem; font-weight: 600; }
+    pre { background: #f0fdfa; padding: 0.75rem; border-radius: 10px; font-size: 0.8rem; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+    .error-box { background: #ffe4e6; border: 1px solid #fecdd3; color: #9f1239; padding: 0.75rem 1rem; border-radius: 12px; font-size: 0.9rem; }
+    @media (max-width: 640px) { .cards { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 480px) { .type-cards { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="/" class="logo">queue<span>.lab</span></a>
+    <a href="/new" class="btn">+ New job</a>
+  </header>
+  <main>
+    {{template "content" .}}
+  </main>
+</body>
+</html>
+{{end}}

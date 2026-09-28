@@ -201,6 +201,48 @@ func (p *Store) PendingCount(ctx context.Context) (int, error) {
 	return n, err
 }
 
+func (p *Store) StatusCounts(ctx context.Context) (map[string]int, error) {
+	rows, err := p.db.Query(ctx,
+		`SELECT status, COUNT(*) FROM jobs GROUP BY status`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]int{}
+	for rows.Next() {
+		var status string
+		var n int
+		if err := rows.Scan(&status, &n); err != nil {
+			return nil, err
+		}
+		out[status] = n
+	}
+	return out, rows.Err()
+}
+
+func (p *Store) Recent(ctx context.Context, limit int) ([]job.Job, error) {
+	rows, err := p.db.Query(ctx,
+		`SELECT id, type, payload, status, result, last_error, created_at, updated_at, attempts, max_attempts, next_run_at, idempotency_key FROM jobs ORDER BY created_at DESC LIMIT $1`,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []job.Job
+	for rows.Next() {
+		var j job.Job
+		if err := scanJob(rows, &j); err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
 func (p *Store) RequeueRunning(ctx context.Context) (int64, error) {
 	tag, err := p.db.Exec(ctx,
 		`UPDATE jobs SET status = 'pending', updated_at = NOW() WHERE status = 'running'`,

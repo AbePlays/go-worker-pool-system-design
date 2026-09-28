@@ -1,0 +1,52 @@
+{{define "content"}}
+<h1>What's cooking</h1>
+
+<div class="cards">
+  <div class="card">
+    <div class="label">Pending</div>
+    <div class="value" style="color:var(--pending)">{{.Counts.Pending}}</div>
+  </div>
+  <div class="card">
+    <div class="label">Running</div>
+    <div class="value" style="color:var(--running)">{{.Counts.Running}}</div>
+  </div>
+  <div class="card">
+    <div class="label">Done</div>
+    <div class="value" style="color:var(--done)">{{.Counts.Done}}</div>
+  </div>
+  <div class="card">
+    <div class="label">Failed</div>
+    <div class="value" style="color:var(--failed)">{{.Counts.Failed}}</div>
+  </div>
+</div>
+
+<div class="queue-label">Queue depth · {{.QueueLen}} / {{.QueueMax}}</div>
+<div class="queue-bar"><span style="width:{{.QueuePct}}%"></span></div>
+
+{{if .Jobs}}
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Type</th>
+      <th>Status</th>
+      <th>Attempts</th>
+      <th>Age</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Jobs}}
+    <tr>
+      <td><a class="id" href="/jobs/{{.ID}}">{{.ShortID}}</a></td>
+      <td>{{.Type}}</td>
+      <td><span class="pill {{.Status}}">{{.Status}}</span></td>
+      <td>{{.Attempts}}/{{.MaxAttempts}}</td>
+      <td>{{.Age}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="empty">No jobs yet. <a href="/new" style="color:var(--accent)">Create one</a>.</p>
+{{end}}
+{{end}}

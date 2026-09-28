@@ -15,6 +15,7 @@ import (
 	"github.com/AbePlays/go-worker-pool-system-design/internal/dispatcher"
 	"github.com/AbePlays/go-worker-pool-system-design/internal/pool"
 	"github.com/AbePlays/go-worker-pool-system-design/internal/store"
+	"github.com/AbePlays/go-worker-pool-system-design/internal/ui"
 )
 
 func main() {
@@ -30,7 +31,7 @@ func main() {
 	p.Start()
 	slog.Info("server starting", "port", c.Port, "workers", c.Workers, "job_timeout_s", int(c.JobTimeout.Seconds()))
 
-	server := newServer(c.Port, api.New(s, c.MaxAttempts, c.QueueMax))
+	server := newServer(c.Port, api.New(s, c.MaxAttempts, c.QueueMax), ui.New(s, c.MaxAttempts, c.QueueMax))
 	d := dispatcher.New(p, s, c.Workers)
 
 	serveUntilSignal(server, d, p)
@@ -65,11 +66,16 @@ func requeueRunning(s *store.Store) {
 	}
 }
 
-func newServer(port string, h *api.Handler) *http.Server {
+func newServer(port string, h *api.Handler, u *ui.Handler) *http.Server {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /api/jobs", h.CreateJob)
 	mux.HandleFunc("GET /api/jobs/{id}", h.GetJob)
+
+	mux.HandleFunc("GET /", u.Dashboard)
+	mux.HandleFunc("GET /new", u.NewForm)
+	mux.HandleFunc("POST /new", u.CreateFromForm)
+	mux.HandleFunc("GET /jobs/{id}", u.Detail)
 
 	return &http.Server{Addr: ":" + port, Handler: mux}
 }
